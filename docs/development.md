@@ -53,7 +53,7 @@ New-Item -ItemType Directory -Force .\data | Out-Null
 .\scripts\start-medgl.ps1 -DataRoot 'D:\AuthorizedCT' -Port 8081 -PngCompression fast
 ```
 
-省略 `-PngCompression fast` 使用默认 PNG 压缩；二者均为无损精细帧，JPEG 预览不变。真实序列需在页面中手动选择并加载。
+省略 `-PngCompression fast` 使用默认 PNG 压缩；二者均为无损精细帧，JPEG 预览不变。页面优先自动加载目录中第一个受支持的 CT；没有可用 CT 时直接显示合成体。首次 CT 加载失败时，先确认旧会话释放，再尝试一次合成体，界面保留明确提示；手动加载失败不自动回退，刷新序列目录不替换当前场景。CT 和合成体都失败时保留错误，不循环重试。
 
 默认严格检查 DICOM UID。对于已确认来源、文件头和数据集实例 UID 不一致的本机研发输入，可显式添加 `-AllowInstanceUidMismatch`；它不放宽其他格式、重复实例或几何检查，不修复或改写原始文件，界面会显示兼容警告。不要把该开关作为通用导入配置。原测试数据的原因和只读验证见 [验证记录](../.spec/MedGL-v1-validation.md)。
 

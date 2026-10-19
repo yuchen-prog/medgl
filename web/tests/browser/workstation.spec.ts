@@ -36,7 +36,7 @@ async function image(page: Page, width: number, height: number): Promise<Buffer>
   return Buffer.from(encoded, 'base64');
 }
 
-async function mockService(page: Page, options: { noPhantom?: boolean; noFrames?: boolean } = {}) {
+async function mockService(page: Page, options: { noPhantom?: boolean; noFrames?: boolean; noCt?: boolean; failCt?: boolean } = {}) {
   const renders: RenderRequest[] = [];
   const created: string[] = [];
   const events: string[] = [];
@@ -46,6 +46,7 @@ async function mockService(page: Page, options: { noPhantom?: boolean; noFrames?
   let cached: Buffer = Buffer.alloc(0);
   let exportQuery = '';
   const sessions = new Map<string, string>();
+  const inputs = new Map<string, string>();
 
   await page.route('**/api/v1/**', async route => {
     const request = route.request();
@@ -63,7 +64,7 @@ async function mockService(page: Page, options: { noPhantom?: boolean; noFrames?
     } else if (url.pathname.endsWith('/series')) {
       await route.fulfill({ json: { series: [
         ...options.noPhantom ? [] : [{ id: 'phantom', description: 'Synthetic phantom', fileCount: 0, supported: true, reason: '' }],
-        { id: 'patient-series', description: 'Explicit dataset', fileCount: 256, supported: true, reason: '' },
+        ...options.noCt ? [] : [{ id: 'patient-series', description: 'CT series', fileCount: 256, supported: true, reason: '' }],
         { id: 'unsupported', description: 'Nonuniform series', fileCount: 12, supported: false, reason: 'Nonuniform slice spacing' }
       ] } });
     } else if (request.method() === 'POST') {
@@ -72,6 +73,7 @@ async function mockService(page: Page, options: { noPhantom?: boolean; noFrames?
       created.push(body.seriesId);
       events.push(`create:${activeSession}`);
       sessions.set(activeSession, 'loading');
+      inputs.set(activeSession, body.seriesId);
       await route.fulfill({ status: 202, json: { sessionId: activeSession, state: 'loading' } });
     } else if (request.method() === 'DELETE') {
       events.push(`delete:${id}`);
@@ -86,7 +88,10 @@ async function mockService(page: Page, options: { noPhantom?: boolean; noFrames?
       if (state === 'closing') {
         closePolls++;
         if (closePolls >= 3) { state = 'closed'; sessions.set(id, state); events.push(`closed:${id}`); }
-      } else if (state === 'loading') { state = 'ready'; sessions.set(id, state); }
+      } else if (state === 'loading') {
+        state = options.failCt && inputs.get(id) === 'patient-series' ? 'failed' : 'ready';
+        sessions.set(id, state);
+      }
       await route.fulfill({ json: { sessionId: id, state, ...(state === 'ready' ? {
         sceneRevision: 1, volume: { dimensions: [160, 180, 200], spacing: [1, 1, 1] }, initial, standardViews
       } : {}) } });
@@ -122,14 +127,16 @@ async function expectReady(page: Page) {
   await expect(page.getByRole('button', { name: 'Download final PNG' })).toBeEnabled();
 }
 
-test('phantom render, rotate, pan, zoom, styles, reset and final PNG export', async ({ page }) => {
+test('CT autoload, rotate, pan, zoom, styles, reset and final PNG export', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
   const errors: string[] = [];
   page.on('pageerror', error => errors.push(error.message));
   const service = await mockService(page);
   await page.goto('/');
   await expectReady(page);
-  expect(service.created).toEqual(['phantom']);
+  expect(service.created).toEqual(['patient-series']);
+  await expect(page.getByRole('combobox', { name: 'Series', exact: true })).toHaveValue('patient-series');
+  await expect(page.locator('.viewport-series')).toHaveText('CT series');
   expect(service.renders[0]!.width).toBeGreaterThan(1);
   expect(service.renders[0]!.height).toBeGreaterThan(1);
   const viewbar = page.getByRole('group', { name: 'Standard views', exact: true });
@@ -216,26 +223,56 @@ test('switch waits for closed confirmation before the next POST', async ({ page 
   const service = await mockService(page);
   await page.goto('/');
   await expectReady(page);
-  await page.getByLabel('Series', { exact: true }).selectOption('patient-series');
+  await page.getByLabel('Series', { exact: true }).selectOption('phantom');
   await page.getByRole('button', { name: 'Load series', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Closing session' })).toBeDisabled();
-  expect(service.created).toEqual(['phantom']);
+  expect(service.created).toEqual(['patient-series']);
   await expectReady(page);
   expect(service.events.indexOf('closed:session-1')).toBeLessThan(service.events.indexOf('create:session-2'));
-  expect(service.created).toEqual(['phantom', 'patient-series']);
+  expect(service.created).toEqual(['patient-series', 'phantom']);
 });
 
-test('never automatically loads a real series and displays unsupported reasons', async ({ page }) => {
+test('loads CT without a synthetic entry and still displays unsupported reasons', async ({ page }) => {
   const service = await mockService(page, { noPhantom: true });
   await page.goto('/');
-  await expect(page.getByText('No volume loaded', { exact: true })).toBeVisible();
+  await expectReady(page);
   const viewButtons = page.getByRole('group', { name: 'Standard views', exact: true }).getByRole('button');
   await expect(viewButtons).toHaveCount(6);
-  for (const button of await viewButtons.all()) await expect(button).toBeDisabled();
-  expect(service.created).toEqual([]);
+  for (const button of await viewButtons.all()) await expect(button).toBeEnabled();
+  expect(service.created).toEqual(['patient-series']);
   await page.getByLabel('Series', { exact: true }).selectOption('unsupported');
   await expect(page.getByText('Nonuniform slice spacing')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Load series', exact: true })).toBeDisabled();
+});
+
+test('failed CT autoload releases its session before synthetic fallback and keeps a visible notice', async ({ page }) => {
+  const service = await mockService(page, { failCt: true });
+  await page.goto('/');
+  await expectReady(page);
+  expect(service.created).toEqual(['patient-series', 'phantom']);
+  expect(service.events.indexOf('closed:session-1')).toBeLessThan(service.events.indexOf('create:session-2'));
+  await expect(page.getByRole('combobox', { name: 'Series', exact: true })).toHaveValue('phantom');
+  await expect(page.locator('.viewport-series')).toHaveText('Synthetic phantom');
+  await expect(page.getByTestId('load-warning')).toContainText('Session failed');
+  await expect(page.getByTestId('load-warning')).toContainText('Showing Synthetic phantom');
+  await page.getByRole('button', { name: 'Refresh series', exact: true }).click();
+  await expectReady(page);
+  expect(service.created).toHaveLength(2);
+  await expect(page.getByTestId('load-warning')).toBeVisible();
+  await page.getByRole('combobox', { name: 'Series', exact: true }).selectOption('patient-series');
+  await page.getByRole('button', { name: 'Load series', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Session failed');
+  expect(service.created).toEqual(['patient-series', 'phantom', 'patient-series']);
+  await expect(page.getByTestId('load-warning')).toHaveCount(0);
+});
+
+test('loads synthetic directly when no supported CT exists', async ({ page }) => {
+  const service = await mockService(page, { noCt: true });
+  await page.goto('/');
+  await expectReady(page);
+  expect(service.created).toEqual(['phantom']);
+  await expect(page.getByRole('combobox', { name: 'Series', exact: true })).toHaveValue('phantom');
+  await expect(page.locator('.synthetic-label')).toBeVisible();
 });
 
 test('narrow drawer and canvas stay in bounds at 320px and 390px', async ({ page }) => {

@@ -109,6 +109,7 @@ button { color: inherit; }
 .series-meta { display: flex; justify-content: space-between; gap: 6px; font-size: 10px; color: var(--muted); margin: 10px 0 17px; }
 .series-meta span:first-child { font-family: var(--mono); color: var(--teal); }
 .inline-error { color: var(--red); font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; margin: 10px 0; }
+.inline-warning { color: #89620d; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; margin: 10px 0 0; }
 .load-button { display: flex; justify-content: center; align-items: center; gap: 8px; height: 36px; width: 100%; color: #fff; background: var(--teal); border: 1px solid var(--teal); border-radius: 4px; font-size: 12px; font-weight: 500; }
 .load-button:hover:not(:disabled) { background: #076c70; }
 .parameter { margin-top: 21px; }

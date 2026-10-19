@@ -199,6 +199,7 @@ function Sidebar({ client, state, open, dismiss, curveOpen, toggleCurve }: {
         {selected && !selected.supported && <p className="inline-error" role="status">{selected.reason || 'Unsupported series'}</p>}
         {selected?.warning && <p className="inline-error" role="status">{selected.warning}</p>}
         {state.catalogError && <p className="inline-error" role="alert">{state.catalogError}</p>}
+        {state.loadWarning && <p className="inline-warning" role="status" data-testid="load-warning">{state.loadWarning}</p>}
       </section>
       <div className="settings-tabs" role="tablist" aria-label="Settings categories">
         {tabs.map(({ id, label, icon: TabIcon }, index) => <button key={id} type="button" role="tab"

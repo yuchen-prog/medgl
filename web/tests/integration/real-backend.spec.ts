@@ -29,6 +29,11 @@ async function pixelSummary(page: Page) {
 
 test('real DICOM, CUDA frames, interaction, presets, PNG export and responsive canvas', async ({ page }) => {
   const errors: string[] = [];
+  const createdSeries: string[] = [];
+  page.on('request', request => {
+    if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/sessions')
+      createdSeries.push((request.postDataJSON() as { seriesId: string }).seriesId);
+  });
   const external: string[] = [];
   await page.route('**/*', route => {
     const url = new URL(route.request().url());
@@ -42,6 +47,9 @@ test('real DICOM, CUDA frames, interaction, presets, PNG export and responsive c
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/');
   await ready(page);
+  expect(createdSeries).toEqual(['series-1']);
+  await expect(page.getByRole('combobox', { name: 'Series', exact: true })).toHaveValue('series-1');
+  await expect(page.locator('.viewport-series')).toHaveText('CT series');
   expect(await page.evaluate(async () => {
     await document.fonts.ready;
     return document.fonts.check('12px "IBM Plex Sans Variable"') && document.fonts.check('12px "IBM Plex Mono"');

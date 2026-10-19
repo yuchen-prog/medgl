@@ -27,7 +27,7 @@ MedGL 是一款面向本机研发场景的三维体渲染工作站：由 Windows
 
 从本机受控目录发现并选择常规单帧 CT 序列，按切片几何排序，应用 rescale 转换强度，并保留 spacing、方向和患者坐标信息。不支持或几何不一致的序列会明确拒绝。
 
-页面默认只自动加载 **Synthetic phantom** 合成体；真实 CT 需要手动选择并加载。原始 DICOM 始终只读，不修复、重命名或写回文件。
+页面启动时优先自动加载目录中第一个受支持的 **CT series**。没有可用 CT 时直接显示 **Synthetic phantom**；自动加载 CT 失败时，先确认失败会话关闭，再回退一次到合成体，并在数据源区域保留失败原因与回退提示。手动选择和加载失败仍显示错误，不自动替换；刷新序列列表不重载当前场景。原始 DICOM 始终只读，不修复、重命名或写回文件。
 
 ### 八种 CT 外观预设
 
@@ -102,7 +102,7 @@ New-Item -ItemType Directory -Force .\data | Out-Null
 .\scripts\start-medgl.ps1 -DataRoot 'D:\AuthorizedCT' -Port 8081 -PngCompression fast
 ```
 
-在页面的 **Series** 中选择支持的序列，再点击 **Load series**。默认严格检查 DICOM UID；已知测试输入的只读兼容策略见 [开发指南](docs/development.md#启动服务)，不建议默认放宽检查。
+页面会优先加载第一个受支持的 CT；也可在 **Series** 中选择其他序列，再点击旁边的加载图标。默认严格检查 DICOM UID；已知测试输入的只读兼容策略见 [开发指南](docs/development.md#启动服务)，不建议默认放宽检查。
 
 ## 适用范围
 
@@ -124,9 +124,9 @@ New-Item -ItemType Directory -Force .\data | Out-Null
 | 检查 | 结果 |
 | --- | --- |
 | 原生 CTest，含实际 CUDA 渲染 | 12 项通过 |
-| 前端单元测试 | 82 项通过 |
-| 模拟服务浏览器测试 | 6 项通过 |
-| 真实 CUDA 浏览器测试 | 默认 / 快速 PNG 模式各 9 项通过 |
+| 前端单元测试 | 91 项通过 |
+| 模拟服务浏览器测试 | 8 项通过 |
+| 真实 CUDA 浏览器测试 | 默认 / 快速 PNG 模式各 10 项通过 |
 
 截图均来自合成数据的实际 GPU 浏览器回归，来源见 [截图说明](docs/images/README.md)。测试条件、实际 CT 验证及未完成事项以 [验证记录](.spec/MedGL-v1-validation.md)为准。
 

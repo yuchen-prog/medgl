@@ -44,10 +44,12 @@ test('browser send-to-canvas samples with separate GPU, codec and decode stages'
   await expect(download).toBeEnabled({ timeout: 30000 });
   await page.getByRole('tab', { name: 'Info', exact: true }).click();
   const series = process.env.MEDGL_PERF_SERIES;
-  if (series) {
-    await page.getByRole('combobox', { name: 'Series', exact: true }).selectOption(series);
+  const benchmarkSeries = series ?? 'phantom';
+  if (await page.getByRole('combobox', { name: 'Series', exact: true }).inputValue() !== benchmarkSeries) {
+    await page.getByRole('combobox', { name: 'Series', exact: true }).selectOption(benchmarkSeries);
     await page.getByRole('button', { name: 'Load series', exact: true }).click();
-    await expect(page.locator('.geometry')).not.toContainText('96 × 96 × 96');
+    if (series) await expect(page.locator('.geometry')).not.toContainText('96 × 96 × 96');
+    else await expect(page.locator('.geometry')).toContainText('96 × 96 × 96');
     await expect(download).toBeEnabled({ timeout: 30000 });
   }
   const resolution = process.env.MEDGL_PERF_RESOLUTION ?? '50%';

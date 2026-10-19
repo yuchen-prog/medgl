@@ -231,16 +231,120 @@ describe('session ownership and render scheduling', () => {
     expect(instance.getSnapshot().presetError).toBeNull();
     expect(instance.getSnapshot().presets).toEqual([heartPreset]);
   });
-  it('autoloads only the synthetic phantom', async () => {
+  it('prefers the first supported CT and keeps catalog selection in sync', async () => {
+    vi.mocked(api.catalog).mockResolvedValue([phantom, { ...patient, id: 'unsupported', supported: false }, patient,
+      { ...patient, id: 'other-ct' }]);
     const instance = client();
     await instance.start();
     await flush();
-    expect(api.createSession).toHaveBeenCalledWith('phantom');
-    instance.stop();
-    await flush();
-    vi.mocked(api.createSession).mockClear();
+    expect(api.createSession).toHaveBeenCalledExactlyOnceWith('patient');
+    expect(instance.getSnapshot()).toMatchObject({ selectedId: 'patient', activeSeries: patient, phase: 'ready' });
+    await instance.refreshCatalog();
+    expect(api.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses synthetic when no supported CT exists, and loads CT even without a synthetic entry', async () => {
+    vi.mocked(api.catalog).mockResolvedValue([phantom, { ...patient, supported: false }]);
+    const synthetic = client();
+    await synthetic.start(); await flush();
+    expect(api.createSession).toHaveBeenLastCalledWith('phantom');
     vi.mocked(api.catalog).mockResolvedValue([patient]);
-    await client().start();
+    const ct = client();
+    await ct.start(); await flush();
+    expect(api.createSession).toHaveBeenLastCalledWith('patient');
+    expect(ct.getSnapshot().activeSeries).toEqual(patient);
+  });
+
+  it('releases a failed automatic CT load before falling back once and preserves its warning', async () => {
+    vi.mocked(api.createSession).mockResolvedValueOnce({ sessionId: 'failed-ct', state: 'loading' })
+      .mockResolvedValueOnce({ ...ready, sessionId: 'synthetic' });
+    vi.mocked(api.waitUntilReady).mockRejectedValueOnce(new Error('CT decode failed'));
+    let confirm: (() => void) | undefined;
+    vi.mocked(api.closeSession).mockImplementationOnce(() => new Promise(resolve => { confirm = resolve; }));
+    const instance = client();
+    await instance.start(); await flush();
+    expect(api.closeSession).toHaveBeenCalledWith('failed-ct', false);
+    expect(api.createSession).toHaveBeenCalledTimes(1);
+    confirm?.(); await flush();
+    expect(api.createSession).toHaveBeenNthCalledWith(2, 'phantom');
+    expect(instance.getSnapshot()).toMatchObject({ phase: 'ready', selectedId: 'phantom', activeSeries: phantom,
+      loadWarning: expect.stringContaining('CT decode failed') });
+    FakeSocket.instances.at(-1)!.open();
+    expect(instance.getSnapshot().loadWarning).toContain('Synthetic phantom');
+  });
+
+  it('falls back after CT creation fails, but never loops if synthetic fails too', async () => {
+    vi.mocked(api.createSession).mockRejectedValueOnce(new Error('CT unavailable'))
+      .mockRejectedValueOnce(new Error('Synthetic unavailable'));
+    const instance = client();
+    await instance.start(); await flush();
+    expect(api.createSession).toHaveBeenNthCalledWith(1, 'patient');
+    expect(api.createSession).toHaveBeenNthCalledWith(2, 'phantom');
+    expect(api.createSession).toHaveBeenCalledTimes(2);
+    expect(instance.getSnapshot()).toMatchObject({ phase: 'error', error: 'Synthetic unavailable' });
+  });
+
+  it('does not fall back when the failed CT session cannot be released', async () => {
+    vi.mocked(api.createSession).mockResolvedValueOnce({ sessionId: 'failed-ct', state: 'loading' });
+    vi.mocked(api.waitUntilReady).mockRejectedValueOnce(new Error('CT decode failed'));
+    vi.mocked(api.closeSession).mockRejectedValueOnce(new Error('Close timeout'));
+    const instance = client();
+    await instance.start(); await flush();
+    expect(api.createSession).toHaveBeenCalledTimes(1);
+    expect(instance.getSnapshot()).toMatchObject({ phase: 'error', error: 'Close timeout' });
+  });
+
+  it('does not replace a newer manual selection with an automatic fallback', async () => {
+    let fail: ((error: Error) => void) | undefined;
+    vi.mocked(api.createSession).mockResolvedValueOnce({ sessionId: 'loading-ct', state: 'loading' });
+    vi.mocked(api.waitUntilReady).mockImplementationOnce(() => new Promise((_, reject) => { fail = reject; }));
+    const instance = client();
+    await instance.start(); await flush();
+    const manual = instance.loadSeries('patient');
+    fail?.(new Error('Old CT cancelled'));
+    await manual; await flush();
+    expect(vi.mocked(api.createSession).mock.calls.map(call => call[0])).toEqual(['patient', 'patient']);
+    expect(instance.getSnapshot().loadWarning).toBeNull();
+  });
+
+  it('keeps manual load failures visible rather than replacing them with synthetic', async () => {
+    const instance = client();
+    await instance.start(); await flush();
+    vi.mocked(api.createSession).mockRejectedValueOnce(new Error('Manual CT failed'));
+    await instance.loadSeries('patient');
+    expect(api.createSession).toHaveBeenCalledTimes(2);
+    expect(instance.getSnapshot()).toMatchObject({ phase: 'error', error: 'Manual CT failed', loadWarning: null });
+  });
+
+  it('ignores a catalog response that predates a manual series load', async () => {
+    const instance = client();
+    await instance.start(); await flush();
+    let deliver: ((series: typeof phantom[]) => void) | undefined;
+    vi.mocked(api.catalog).mockImplementationOnce(() => new Promise(resolve => { deliver = resolve; }));
+    const refresh = instance.refreshCatalog();
+    await instance.loadSeries('patient');
+    deliver?.([phantom]);
+    await refresh;
+    expect(instance.getSnapshot()).toMatchObject({ selectedId: 'patient', activeSeries: patient, series: [phantom, patient] });
+  });
+
+  it('does not let an older catalog request replace a newer catalog', async () => {
+    const instance = client();
+    await instance.start(); await flush();
+    let deliver: ((series: typeof phantom[]) => void) | undefined;
+    vi.mocked(api.catalog).mockImplementationOnce(() => new Promise(resolve => { deliver = resolve; }));
+    const older = instance.refreshCatalog();
+    vi.mocked(api.catalog).mockResolvedValueOnce([patient]);
+    await instance.refreshCatalog();
+    deliver?.([phantom]);
+    await older;
+    expect(instance.getSnapshot()).toMatchObject({ selectedId: 'patient', series: [patient] });
+  });
+
+  it('does not create a session when the catalog has no supported inputs', async () => {
+    vi.mocked(api.catalog).mockResolvedValue([{ ...patient, supported: false }]);
+    const instance = client();
+    await instance.start();
     await flush();
     expect(api.createSession).not.toHaveBeenCalled();
   });

@@ -20,6 +20,7 @@ export interface WorkstationState {
   rendering: boolean;
   error: string | null;
   catalogError: string | null;
+  loadWarning: string | null;
   presets: AppearancePreset[];
   presetError: string | null;
   customPresets: SavedPreset[];
@@ -32,7 +33,7 @@ export interface WorkstationState {
 const initialState: WorkstationState = {
   phase: 'idle', connection: 'offline', series: [], selectedId: 'phantom', activeSeries: null,
   session: null, camera: null, style: null, cropBox: null, clipPlane: null, frame: null, rendering: false,
-  error: null, catalogError: null, width: 1, height: 1, presets: [], presetError: null,
+  error: null, catalogError: null, loadWarning: null, width: 1, height: 1, presets: [], presetError: null,
   customPresets: [], customPresetId: null, storageError: null
 };
 
@@ -44,6 +45,7 @@ export class WorkstationClient {
   private presentedListeners = new Set<(meta: FrameMeta) => void>();
   private live = false;
   private generation = 0;
+  private catalogGeneration = 0;
   private operations: Promise<void> = Promise.resolve();
   private ownedSessionId: string | null = null;
   private socket: WebSocket | null = null;
@@ -159,19 +161,23 @@ export class WorkstationClient {
     if (preset?.transferFunction) this.setTransferFunction(preset.transferFunction);
   }
 
-  async refreshCatalog(autoPhantom = false): Promise<void> {
+  async refreshCatalog(autoLoad = false): Promise<void> {
     const generation = this.generation;
+    const request = ++this.catalogGeneration;
     if (this.state.series.length === 0) this.patch({ phase: 'catalog' });
     this.patch({ catalogError: null });
     try {
       const series = await api.catalog();
-      if (!this.live) return;
+      if (!this.live || request !== this.catalogGeneration || generation !== this.generation) return;
       const phantom = series.find(item => item.id === 'phantom' && item.supported);
+      const preferred = series.find(item => item.id !== 'phantom' && item.supported) ?? phantom;
       const selectedId = series.some(item => item.id === this.state.selectedId) ? this.state.selectedId : (phantom?.id ?? '');
       this.patch({ series, selectedId, phase: this.state.phase === 'catalog' ? 'idle' : this.state.phase });
-      if (autoPhantom && phantom && !this.ownedSessionId && this.generation === generation) void this.loadSeries(phantom.id);
+      if (autoLoad && preferred && !this.ownedSessionId && this.generation === generation)
+        void this.queueSeriesLoad(preferred, preferred.id === 'phantom' ? undefined : phantom);
     } catch (error) {
-      if (this.live) this.patch({ catalogError: errorText(error), phase: this.state.phase === 'catalog' ? 'idle' : this.state.phase });
+      if (this.live && request === this.catalogGeneration && generation === this.generation)
+        this.patch({ catalogError: errorText(error), phase: this.state.phase === 'catalog' ? 'idle' : this.state.phase });
     }
   }
 
@@ -182,37 +188,56 @@ export class WorkstationClient {
   loadSeries(seriesId = this.state.selectedId): Promise<void> {
     const series = this.state.series.find(item => item.id === seriesId);
     if (!series?.supported || !this.live) return Promise.resolve();
+    return this.queueSeriesLoad(series);
+  }
+
+  private queueSeriesLoad(series: Series, fallback?: Series): Promise<void> {
     const generation = ++this.generation;
     this.disconnect();
-    this.patch({ phase: this.ownedSessionId ? 'closing' : 'loading', error: null, rendering: false });
+    this.patch({ phase: this.ownedSessionId ? 'closing' : 'loading', selectedId: series.id,
+      loadWarning: null, error: null, rendering: false });
     this.operations = this.operations.then(async () => {
       try {
-        await this.releaseSession();
-        if (!this.live || generation !== this.generation) return;
-        this.lastLatencyMs = null;
-        this.patch({ phase: 'loading', session: null, camera: null, style: null, cropBox: null, clipPlane: null,
-          customPresetId: null, frame: null, activeSeries: series });
-        const created = await api.createSession(seriesId);
-        this.ownedSessionId = created.sessionId;
-        if (!this.live || generation !== this.generation) {
+        let fallbackReason: string | null = null;
+        for (const candidate of fallback ? [series, fallback] : [series]) {
+          if (!this.live || generation !== this.generation) return;
           await this.releaseSession();
-          return;
+          if (!this.live || generation !== this.generation) return;
+          this.lastLatencyMs = null;
+          this.patch({ phase: 'loading', session: null, camera: null, style: null, cropBox: null, clipPlane: null,
+            customPresetId: null, frame: null, activeSeries: candidate, selectedId: candidate.id,
+            loadWarning: fallbackReason === null ? null :
+              `CT series could not be loaded: ${fallbackReason}. Showing Synthetic phantom instead.` });
+          try {
+            const created = await api.createSession(candidate.id);
+            this.ownedSessionId = created.sessionId;
+            if (!this.live || generation !== this.generation) {
+              await this.releaseSession();
+              return;
+            }
+            this.patch({ session: created });
+            const session = created.state === 'ready' ? created : await api.waitUntilReady(created.sessionId,
+              () => !this.live || generation !== this.generation);
+            if (!this.live || generation !== this.generation) {
+              await this.releaseSession();
+              return;
+            }
+            if (!session.initial) throw new Error('Missing initial view');
+            this.patch({ phase: 'ready', session, camera: structuredClone(session.initial.camera),
+              style: structuredClone(session.initial.style),
+              cropBox: structuredClone(session.initial.cropBox ?? fullCropBox()),
+              clipPlane: structuredClone(session.initial.clipPlane ?? defaultClipPlane()), error: null });
+            this.reconnectAttempts = 0;
+            this.frameFailures = 0;
+            this.connect();
+            return;
+          } catch (error) {
+            if (!this.live || generation !== this.generation) return;
+            if (!fallback || candidate !== series) throw error;
+            fallbackReason = errorText(error);
+            this.patch({ phase: this.ownedSessionId ? 'closing' : 'loading', rendering: false });
+          }
         }
-        this.patch({ session: created });
-        const session = created.state === 'ready' ? created : await api.waitUntilReady(created.sessionId,
-          () => !this.live || generation !== this.generation);
-        if (!this.live || generation !== this.generation) {
-          await this.releaseSession();
-          return;
-        }
-        if (!session.initial) throw new Error('Missing initial view');
-        this.patch({ phase: 'ready', session, camera: structuredClone(session.initial.camera),
-          style: structuredClone(session.initial.style),
-          cropBox: structuredClone(session.initial.cropBox ?? fullCropBox()),
-          clipPlane: structuredClone(session.initial.clipPlane ?? defaultClipPlane()), error: null });
-        this.reconnectAttempts = 0;
-        this.frameFailures = 0;
-        this.connect();
       } catch (error) {
         if (this.live && generation === this.generation) this.patch({ phase: 'error', error: errorText(error), rendering: false });
       }
