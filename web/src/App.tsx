@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { Activity, AlertCircle, Check, ChevronDown, Download, Hand, LoaderCircle, Maximize,
-  ChartSpline, Crop, Info, SlidersHorizontal, FlipHorizontal2, PanelLeftClose, PanelLeftOpen, Play, RefreshCw, Rotate3D, RotateCcw, Scan, X, ZoomIn, ZoomOut } from 'lucide-react';
+  ChartSpline, Crop, Info, Moon, Sun, SlidersHorizontal, FlipHorizontal2, PanelLeftClose, PanelLeftOpen, Play, RefreshCw, Rotate3D, RotateCcw, Scan, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { clamp, matchedStandardView, orbitCamera, orientationLabels, panCamera, zoomCamera } from './camera';
 import { planeAngles, planeNormal, planeRadius } from './clip-plane';
 import type { InteractionMode } from './clip-plane';
@@ -10,6 +10,7 @@ import { WorkstationClient } from './workstation';
 import type { WorkstationState } from './workstation';
 import { TransferEditor } from './TransferEditor';
 import { colorHex } from './transfer';
+import { applyTheme, readTheme, saveTheme } from './theme';
 
 const GlassPlane = lazy(() => import('./GlassPlane').then(module => ({ default: module.GlassPlane })));
 
@@ -433,6 +434,8 @@ function Viewport({ client, state, mode, resolution }: {
 }
 
 export function App() {
+  const [theme, setTheme] = useState(readTheme);
+  const [themeSaved, setThemeSaved] = useState(true);
   const sequence = useRef(0);
   const [client] = useState(() => new WorkstationClient(sequence));
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
@@ -530,14 +533,28 @@ export function App() {
     const opener = document.querySelector<HTMLButtonElement>('[aria-controls="settings-panel"]');
     if (opener?.getClientRects().length) opener.focus();
   };
+  const toggleTheme = () => {
+    const next = theme === 'light' ? 'dark' : 'light';
+    applyTheme(next);
+    setTheme(next);
+    setThemeSaved(saveTheme(next));
+  };
 
   return <div className="workstation">
     <header className="app-header">
       <div className="brand"><span className="brand-mark"><Scan size={21} strokeWidth={1.8} /></span>
         <strong>MEDGL<span className="brand-dot">.</span></strong><span className="brand-divider" />
         <span className="product-title">Volume workstation</span></div>
-      <div className="header-status"><span className={`status-dot${state.connection === 'online' ? ' online' : state.error ? ' failed' : ''}`} />
-        <span>{status}</span><span className="header-protocol">CUDA / VR</span></div>
+      <div className="header-actions">
+        <div className="header-status"><span className={`status-dot${state.connection === 'online' ? ' online' : state.error ? ' failed' : ''}`} />
+          <span>{status}</span><span className="header-protocol">CUDA / VR</span></div>
+        <div className="theme-toggle">
+          <IconButton label="Dark theme" role="switch" aria-checked={theme === 'dark'} onClick={toggleTheme}>
+            {theme === 'dark' ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
+          </IconButton>
+          {!themeSaved && <span className="theme-storage-notice" role="status">Theme applies for this visit. Browser storage is unavailable.</span>}
+        </div>
+      </div>
     </header>
     <main className="workspace">
       <Sidebar client={client} state={state} open={drawerOpen} dismiss={dismissSettings}

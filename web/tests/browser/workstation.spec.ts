@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import type { RenderRequest } from '../../src/protocol';
+import { THEME_STORAGE_KEY } from '../../src/theme';
 
 const initial = {
   camera: { targetMm: [80, 90, 100], rotationXyzw: [0, 0, 0, 1], orthoHeightMm: 240 },
@@ -358,4 +359,51 @@ test('icon tabs keep common controls visible and support keyboard navigation wit
   expect(service.renders.at(-1)?.camera).toEqual(initialView?.camera);
   expect(service.renders.at(-1)?.style).toEqual(initialView?.style);
   await page.screenshot({ path: 'test-results/settings-tabs-desktop.png' });
+});
+
+test('theme preference defaults to light, persists, and recovers from invalid stored values', async ({ page }) => {
+  const service = await mockService(page);
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.goto('/');
+  await expectReady(page);
+  const toggle = page.getByRole('switch', { name: 'Dark theme', exact: true });
+  await expect(toggle).not.toBeChecked();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  const renders = service.renders.length;
+  await toggle.check();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  expect(service.renders).toHaveLength(renders);
+  expect(await page.evaluate(key => localStorage.getItem(key), THEME_STORAGE_KEY)).toBe('dark');
+  await page.reload();
+  await expectReady(page);
+  await expect(toggle).toBeChecked();
+  expect(await page.locator('html').evaluate(element => getComputedStyle(element).colorScheme)).toBe('dark');
+  await toggle.focus();
+  await page.keyboard.press('Space');
+  await expect(toggle).not.toBeChecked();
+  await page.reload();
+  await expectReady(page);
+  await expect(toggle).not.toBeChecked();
+  await page.evaluate(key => localStorage.setItem(key, 'invalid'), THEME_STORAGE_KEY);
+  await page.reload();
+  await expectReady(page);
+  await expect(toggle).not.toBeChecked();
+});
+
+test('theme still switches when browser storage is blocked and reports that it cannot be saved', async ({ page }) => {
+  await page.addInitScript(() => Object.defineProperty(window, 'localStorage', {
+    configurable: true, get() { throw new DOMException('Storage blocked', 'SecurityError'); }
+  }));
+  const errors: string[] = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await mockService(page);
+  await page.goto('/');
+  await expectReady(page);
+  const toggle = page.getByRole('switch', { name: 'Dark theme', exact: true });
+  await toggle.check();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+  await expect(page.locator('.theme-storage-notice')).toContainText('Browser storage is unavailable');
+  await toggle.uncheck();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  expect(errors).toEqual([]);
 });
