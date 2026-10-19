@@ -218,7 +218,9 @@ test('native browser stability: five lifecycle cycles, rapid sliders and offline
           active = await captured(expectedSessions);
           expect(active !== previous, 'Every load must allocate a distinct session').toBe(true);
           if (seriesId === 'series-1') {
+            await page.getByRole('tab', { name: 'Info', exact: true }).click();
             await expect(page.locator('.geometry')).toContainText(/64\s*\u00d7\s*64\s*\u00d7\s*64/, { timeout: 30_000 });
+            await page.getByRole('tab', { name: 'Display', exact: true }).click();
           }
           lastSeq = await presented(active, lastSeq);
           await closed(request, previous);

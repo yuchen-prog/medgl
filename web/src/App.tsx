@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
 import { Activity, AlertCircle, Check, ChevronDown, Download, Hand, LoaderCircle, Maximize,
-  FlipHorizontal2, PanelLeftClose, PanelLeftOpen, Play, RefreshCw, Rotate3D, RotateCcw, Scan, X, ZoomIn, ZoomOut } from 'lucide-react';
+  ChartSpline, Crop, Info, SlidersHorizontal, FlipHorizontal2, PanelLeftClose, PanelLeftOpen, Play, RefreshCw, Rotate3D, RotateCcw, Scan, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { clamp, matchedStandardView, orbitCamera, orientationLabels, panCamera, zoomCamera } from './camera';
 import { planeAngles, planeNormal, planeRadius } from './clip-plane';
 import type { InteractionMode } from './clip-plane';
@@ -94,7 +94,7 @@ function CropControls({ client, state }: { client: WorkstationClient; state: Wor
       <input type="checkbox" aria-label="Enable crop" disabled={!available} checked={crop?.enabled ?? false}
         onChange={event => { if (crop) client.setCropBox({ ...crop, enabled: event.target.checked }); }} />
     </label>
-    {['Columns (X)', 'Rows (Y)', 'Slices (Z)'].map((label, axis) => <fieldset className="crop-axis" key={axis} disabled={!editable}>
+    <div hidden={!editable}>{['Columns (X)', 'Rows (Y)', 'Slices (Z)'].map((label, axis) => <fieldset className="crop-axis" key={axis} disabled={!editable}>
       <legend>{label}</legend>
       {(['minimum', 'maximum'] as const).map(bound => {
         const name = bound === 'minimum' ? 'From' : 'To';
@@ -112,7 +112,7 @@ function CropControls({ client, state }: { client: WorkstationClient; state: Wor
             onBlur={() => client.finishInteraction()} /><span>%</span>
         </div>;
       })}
-    </fieldset>)}
+    </fieldset>)}</div>
   </section>;
 }
 
@@ -140,6 +140,8 @@ function PlaneControls({ client, state }: {
       <input type="checkbox" aria-label="Enable clipping plane" disabled={!available} checked={plane?.enabled ?? false}
         onChange={event => { if (plane) client.setClipPlane({ ...plane, enabled: event.target.checked }); }} />
     </label>
+    <details className="settings-disclosure" hidden={!editable}>
+    <summary>Precision settings</summary>
     <Parameter id="plane-azimuth" label="Azimuth (LPS)" value={Number(angles.azimuth.toFixed(1))}
       min={-180} max={180} step={0.1} suffix="deg" disabled={!editable}
       change={azimuth => rotate(azimuth, angles.tilt)} finish={() => client.finishInteraction()} />
@@ -149,12 +151,17 @@ function PlaneControls({ client, state }: {
     <Parameter id="plane-offset" label="Plane position" value={Number((plane?.offsetMm ?? 0).toFixed(1))}
       min={-radius} max={radius} step={0.1} suffix="mm" disabled={!editable}
       change={offsetMm => { if (plane) client.setClipPlane({ ...plane, offsetMm }); }} finish={() => client.finishInteraction()} />
+    </details>
   </section>;
 }
 
-function Sidebar({ client, state, open, dismiss }: {
+function Sidebar({ client, state, open, dismiss, curveOpen, toggleCurve }: {
   client: WorkstationClient; state: WorkstationState; open: boolean; dismiss: () => void;
+  curveOpen: boolean; toggleCurve: () => void;
 }) {
+  const [tab, setTab] = useState('display');
+  const tabs = [{ id: 'display', label: 'Display', icon: SlidersHorizontal },
+    { id: 'crop', label: 'Crop', icon: Crop }, { id: 'info', label: 'Info', icon: Info }];
   const ready = state.phase === 'ready';
   const busy = ['loading', 'closing', 'catalog'].includes(state.phase);
   const selected = state.series.find(series => series.id === state.selectedId);
@@ -171,29 +178,48 @@ function Sidebar({ client, state, open, dismiss }: {
       <div className="sidebar-mobile-heading"><strong>Volume settings</strong>
         <IconButton label="Close settings" onClick={dismiss}><X size={18} /></IconButton>
       </div>
-      <section className="settings-section">
+      <section className="settings-section data-source-section">
         <div className="section-heading"><h2>Data source</h2>
           <IconButton label="Refresh series" disabled={busy} onClick={() => void client.refreshCatalog()}><RefreshCw size={15} /></IconButton>
         </div>
         <label className="field-label" htmlFor="series">Series</label>
-        <div className="select-wrap"><select id="series" value={state.selectedId} disabled={busy || !state.series.length}
+        <div className="data-source-actions"><div className="select-wrap"><select id="series" value={state.selectedId} disabled={busy || !state.series.length}
           onChange={event => client.selectSeries(event.target.value)}>
           {!state.series.length && <option value={state.selectedId}>No series available</option>}
           {state.series.map(series => <option key={series.id} value={series.id}>
             {series.description || series.id}{series.supported ? '' : ' (unsupported)'}
           </option>)}
         </select><ChevronDown size={14} /></div>
+        <IconButton label={state.phase === 'closing' ? 'Closing session' : state.phase === 'loading' ? 'Loading volume' : 'Load series'}
+          disabled={busy || !selected?.supported} onClick={() => { void client.loadSeries(); dismiss(); }}>
+          {busy ? <LoaderCircle className="spin" size={16} /> : <Play size={15} />}
+        </IconButton></div>
         <div className="series-meta"><span>{selected?.id === 'phantom' ? 'SYNTHETIC' : 'DICOM SERIES'}</span>
           <span>{selected ? `${selected.fileCount} files` : '--'}</span></div>
         {selected && !selected.supported && <p className="inline-error" role="status">{selected.reason || 'Unsupported series'}</p>}
         {selected?.warning && <p className="inline-error" role="status">{selected.warning}</p>}
         {state.catalogError && <p className="inline-error" role="alert">{state.catalogError}</p>}
-        <button className="load-button" type="button" disabled={busy || !selected?.supported}
-          onClick={() => { void client.loadSeries(); dismiss(); }}>
-          {busy ? <LoaderCircle className="spin" size={16} /> : <Play size={15} />}
-          <span>{state.phase === 'closing' ? 'Closing session' : state.phase === 'loading' ? 'Loading volume' : 'Load series'}</span>
-        </button>
       </section>
+      <div className="settings-tabs" role="tablist" aria-label="Settings categories">
+        {tabs.map(({ id, label, icon: TabIcon }, index) => <button key={id} type="button" role="tab"
+          id={`settings-tab-${id}`} aria-controls={`settings-content-${id}`} aria-selected={tab === id}
+          aria-label={label}
+          tabIndex={tab === id ? 0 : -1} onClick={() => setTab(id)}
+          onKeyDown={event => {
+            const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length : event.key === 'ArrowLeft' ?
+              (index + tabs.length - 1) % tabs.length : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
+            if (next === null) return;
+            event.preventDefault();
+            setTab(tabs[next]!.id);
+            document.getElementById(`settings-tab-${tabs[next]!.id}`)?.focus();
+          }}>
+          <TabIcon size={16} aria-hidden="true" /><span>{label}</span>
+          {id === 'crop' && (state.clipPlane?.enabled || state.cropBox?.enabled) &&
+            <span className="tab-active-indicator" role="img" aria-label="Clipping active" />}
+        </button>)}
+      </div>
+      <div className="sidebar-panels">
+      <div role="tabpanel" id="settings-content-display" aria-labelledby="settings-tab-display" hidden={tab !== 'display'}>
       <section className="settings-section">
         <div className="section-heading"><h2>Appearance</h2><span className="section-index">01</span></div>
         <label className="field-label" htmlFor="preset">Transfer preset</label>
@@ -207,6 +233,8 @@ function Sidebar({ client, state, open, dismiss }: {
             disabled={!state.session?.transferFunctionSupported || !state.presets.some(base => base.id === item.style.presetId)}
             value={item.id}>{item.name}</option>)}</optgroup>}
         </select><ChevronDown size={14} /></div>
+        <IconButton label="Edit transfer function" active={curveOpen} aria-expanded={curveOpen} aria-controls="transfer-dock"
+          disabled={!ready || !state.session?.transferFunctionSupported} onClick={toggleCurve}><ChartSpline size={16} /></IconButton>
         <IconButton label="Reset preset" disabled={!ready || !preset}
           onClick={() => { if (preset) client.applyPreset(savedPreset?.id ?? preset.id); }}><RotateCcw size={16} /></IconButton>
         </div>
@@ -218,13 +246,13 @@ function Sidebar({ client, state, open, dismiss }: {
         {state.presetError && <div className="preset-error"><p className="inline-error" role="alert">{state.presetError}</p>
           <IconButton label="Retry presets" onClick={() => void client.refreshPresets()}><RefreshCw size={15} /></IconButton>
         </div>}
-        <TransferEditor key={`${state.session?.sessionId}:${state.customPresetId ?? style?.presetId}`} client={client} state={state} />
         <Parameter id="window-width" label="Window width" value={style?.windowWidth ?? 1800} min={1} max={5000}
           suffix="HU" disabled={!ready} change={windowWidth => setStyle({ windowWidth })} finish={() => client.finishInteraction()} />
         <Parameter id="window-level" label="Window level" value={style?.windowLevel ?? 400} min={-1500} max={3000}
           suffix="HU" disabled={!ready} change={windowLevel => setStyle({ windowLevel })} finish={() => client.finishInteraction()} />
         <Parameter id="opacity" label="Opacity scale" value={style?.opacityScale ?? 1} min={0} max={3} step={0.05}
           disabled={!ready} change={opacityScale => setStyle({ opacityScale })} finish={() => client.finishInteraction()} />
+        <details className="settings-disclosure lighting-disclosure"><summary>Lighting and background</summary>
         <label className="background-setting"><span className="field-label">Gradient lighting</span>
           <input type="checkbox" disabled={!ready} checked={style?.lighting ?? false}
             onChange={event => setStyle({ lighting: event.target.checked })} />
@@ -241,9 +269,14 @@ function Sidebar({ client, state, open, dismiss }: {
             })}
           </div>
         </div>
+        </details>
       </section>
+      </div>
+      <div role="tabpanel" id="settings-content-crop" aria-labelledby="settings-tab-crop" hidden={tab !== 'crop'}>
       <PlaneControls client={client} state={state} />
       <CropControls client={client} state={state} />
+      </div>
+      <div role="tabpanel" id="settings-content-info" aria-labelledby="settings-tab-info" hidden={tab !== 'info'}>
       <section className="settings-section geometry-section">
         <div className="section-heading"><h2>Volume geometry</h2><span className="section-index">02</span></div>
         <dl className="geometry">
@@ -270,6 +303,8 @@ function Sidebar({ client, state, open, dismiss }: {
             <dd>{typeof value === 'number' ? value.toFixed(2) : '--'}<small>ms</small></dd></div>)}
         </dl>
       </section>
+      </div>
+      </div>
       <div className="sidebar-bottom"><Activity size={14} /><span>CUDA volume rendering</span><span className="version">v1</span></div>
     </aside>
   </>;
@@ -401,12 +436,17 @@ export function App() {
   const [client] = useState(() => new WorkstationClient(sequence));
   const state = useSyncExternalStore(client.subscribe, client.getSnapshot);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [curveOpen, setCurveOpen] = useState(false);
   const [mode, setMode] = useState<InteractionMode>('rotate');
   const [resolution, setResolution] = useState(1);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const viewer = useRef<HTMLElement>(null);
   const errorBanner = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (curveOpen) document.getElementById('transfer-dock')?.focus();
+  }, [curveOpen]);
 
   useEffect(() => {
     const host = viewer.current;
@@ -440,7 +480,8 @@ export function App() {
       if (event.key === 'Escape') { setDrawerOpen(false); document.querySelector<HTMLButtonElement>('[aria-controls="settings-panel"]')?.focus(); }
       if (event.key !== 'Tab') return;
       const focusable = Array.from(document.querySelectorAll<HTMLElement>(
-        '#settings-panel button:not(:disabled), #settings-panel input:not(:disabled), #settings-panel select:not(:disabled)'));
+        '#settings-panel button:not(:disabled), #settings-panel input:not(:disabled), #settings-panel select:not(:disabled), #settings-panel summary'))
+        .filter(element => element.getClientRects().length > 0);
       const first = focusable[0];
       const last = focusable.at(-1);
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
@@ -473,6 +514,21 @@ export function App() {
     } catch (error) { setExportError(error instanceof Error ? error.message : 'Export failed'); }
     finally { setExporting(false); }
   };
+  const closeCurve = () => {
+    setCurveOpen(false);
+    const opener = document.querySelector<HTMLButtonElement>('[aria-controls="transfer-dock"]');
+    if (opener?.getClientRects().length) opener.focus();
+    else {
+      const settings = document.querySelector<HTMLButtonElement>('[aria-controls="settings-panel"]');
+      if (settings?.getClientRects().length) settings.focus();
+      else document.querySelector<HTMLElement>('[data-testid="viewport"]')?.focus();
+    }
+  };
+  const dismissSettings = () => {
+    setDrawerOpen(false);
+    const opener = document.querySelector<HTMLButtonElement>('[aria-controls="settings-panel"]');
+    if (opener?.getClientRects().length) opener.focus();
+  };
 
   return <div className="workstation">
     <header className="app-header">
@@ -483,7 +539,8 @@ export function App() {
         <span>{status}</span><span className="header-protocol">CUDA / VR</span></div>
     </header>
     <main className="workspace">
-      <Sidebar client={client} state={state} open={drawerOpen} dismiss={() => setDrawerOpen(false)} />
+      <Sidebar client={client} state={state} open={drawerOpen} dismiss={dismissSettings}
+        curveOpen={curveOpen} toggleCurve={() => { setCurveOpen(!curveOpen); setDrawerOpen(false); }} />
       <section ref={viewer} className="viewer" aria-label="Volume viewer">
         <div className="viewer-toolbar">
           <div className="toolbar-group mobile-settings"><IconButton label={drawerOpen ? 'Close settings' : 'Open settings'}
@@ -530,6 +587,16 @@ export function App() {
             }}><RefreshCw size={16} /></IconButton>}
         </div>}
         <Viewport client={client} state={state} mode={mode} resolution={resolution} />
+        <section id="transfer-dock" className="transfer-dock" aria-label="Transfer function editor" hidden={!curveOpen} tabIndex={-1}
+          onKeyDown={event => {
+            if (event.key !== 'Escape' || event.defaultPrevented ||
+                (event.target as Element).closest('input, select, textarea, [contenteditable="true"]')) return;
+            event.stopPropagation();
+            closeCurve();
+          }}>
+          <TransferEditor key={`${state.session?.sessionId}:${state.customPresetId ?? state.style?.presetId}`}
+            client={client} state={state} close={closeCurve} />
+        </section>
         <footer className="viewer-footer"><div><span className={`status-dot${state.connection === 'online' ? ' online' : ''}`} />
           <span>{state.connection === 'online' ? state.rendering ? 'Rendering' : state.frame ? 'Ready' : 'Awaiting image' : status}</span></div>
           <div className="frame-stats"><Maximize size={12} /><span>{state.width}{' \u00d7 '}{state.height}</span>

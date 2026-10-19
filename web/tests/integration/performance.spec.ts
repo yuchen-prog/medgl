@@ -42,6 +42,7 @@ test('browser send-to-canvas samples with separate GPU, codec and decode stages'
   await page.goto('/');
   const download = page.getByRole('button', { name: 'Download final PNG', exact: true });
   await expect(download).toBeEnabled({ timeout: 30000 });
+  await page.getByRole('tab', { name: 'Info', exact: true }).click();
   const series = process.env.MEDGL_PERF_SERIES;
   if (series) {
     await page.getByRole('combobox', { name: 'Series', exact: true }).selectOption(series);

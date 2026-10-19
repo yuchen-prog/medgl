@@ -34,13 +34,15 @@ test('GPU crop controls preserve state, restore exact image, export and fit narr
   await finalFrame(page);
   await page.getByRole('combobox', { name: 'Series', exact: true }).selectOption('series-1');
   await page.getByRole('button', { name: 'Load series', exact: true }).click();
+  await page.getByRole('tab', { name: 'Info', exact: true }).click();
   await expect(page.locator('.geometry')).toContainText('64 × 64 × 64');
   await finalFrame(page);
   await changed(page, () => page.getByRole('combobox', { name: 'Render size' }).selectOption('50%'));
   const original = await pixels(page);
+  await page.getByRole('tab', { name: 'Crop', exact: true }).click();
   const enabled = page.getByRole('checkbox', { name: 'Enable crop', exact: true });
   const from = page.getByRole('spinbutton', { name: 'Columns (X) from', exact: true });
-  await expect(from).toBeDisabled();
+  await expect(page.getByTestId('crop-controls').getByLabel('Columns (X) from', { exact: true })).toBeDisabled();
   await changed(page, () => enabled.check());
   await expect(page.getByTestId('crop-status')).toBeVisible();
   expect(await pixels(page)).toEqual(original);
@@ -60,12 +62,14 @@ test('GPU crop controls preserve state, restore exact image, export and fit narr
   await expect(page.getByTestId('crop-status')).toHaveCount(0);
   expect(await pixels(page)).toEqual(original);
   await changed(page, () => enabled.check());
+  await page.getByRole('tab', { name: 'Display', exact: true }).click();
   await changed(page, () => page.getByRole('combobox', { name: 'Transfer preset', exact: true }).selectOption('ct-soft-tissue'));
   await changed(page, () => page.getByRole('button', { name: 'Anterior view', exact: true }).click());
+  await page.getByRole('tab', { name: 'Crop', exact: true }).click();
   await expect(from).toHaveValue('50');
   await changed(page, () => page.getByRole('button', { name: 'Reset crop', exact: true }).click());
   await expect(enabled).not.toBeChecked();
-  await expect(from).toHaveValue('0');
+  await expect(page.getByTestId('crop-controls').getByLabel('Columns (X) from', { exact: true })).toHaveValue('0');
   for (const width of [390, 320]) {
     await changed(page, () => page.setViewportSize({ width, height: 844 }));
     await page.getByRole('button', { name: 'Open settings' }).click();

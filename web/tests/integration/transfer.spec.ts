@@ -39,6 +39,7 @@ test('editable preset curves change GPU output, restore exactly, save locally an
   await page.goto('/');
   await finalFrame(page);
   await changed(page, () => page.getByRole('combobox', { name: 'Render size', exact: true }).selectOption('50%'));
+  await changed(page, () => page.getByRole('button', { name: 'Edit transfer function', exact: true }).click());
   const sessionId = (await frame()).sessionId;
   const response = await request.get(`/api/v1/sessions/${sessionId}`);
   const session = await response.json() as Session;
@@ -81,8 +82,9 @@ test('editable preset curves change GPU output, restore exactly, save locally an
   await expect(page.locator('.curve-point')).toHaveCount(initialCurve.length);
   await page.getByRole('button', { name: 'Curve point 3', exact: true }).focus();
   await changed(page, () => page.keyboard.press('ArrowUp'));
-  await page.getByRole('textbox', { name: 'Custom preset name', exact: true }).fill('Green bone');
   await page.getByRole('button', { name: 'Save custom preset', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Custom preset name', exact: true }).fill('Green bone');
+  await page.getByRole('button', { name: 'Confirm save preset', exact: true }).click();
   const localId = await presetSelect.inputValue();
   expect(localId).toMatch(/^local-/);
   const savedCurve = (await frame()).transferFunction;
@@ -106,6 +108,7 @@ test('editable preset curves change GPU output, restore exactly, save locally an
   }).toBe(true);
   await page.goto('/');
   await finalFrame(page);
+  await changed(page, () => page.getByRole('button', { name: 'Edit transfer function', exact: true }).click());
   await changed(page, () => presetSelect.selectOption(localId));
   expect((await frame()).transferFunction).toEqual(savedCurve);
   const touch = await page.context().newCDPSession(page);
@@ -113,7 +116,6 @@ test('editable preset curves change GPU output, restore exactly, save locally an
   try {
     for (const width of [390, 320]) {
       await changed(page, () => page.setViewportSize({ width, height: 844 }));
-      await page.getByRole('button', { name: 'Open settings', exact: true }).click();
       const target = page.getByRole('button', { name: 'Curve point 3', exact: true });
       await target.scrollIntoViewIfNeeded();
       const rect = (await target.boundingBox())!;
@@ -133,7 +135,6 @@ test('editable preset curves change GPU output, restore exactly, save locally an
         });
       })).toBe(true);
       await page.screenshot({ path: `test-results-real/transfer-mobile-${width}.png` });
-      await page.keyboard.press('Escape');
     }
   } finally { await touch.detach(); }
   await page.setViewportSize({ width: 1440, height: 960 });

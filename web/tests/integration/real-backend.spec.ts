@@ -46,6 +46,7 @@ test('real DICOM, CUDA frames, interaction, presets, PNG export and responsive c
     await document.fonts.ready;
     return document.fonts.check('12px "IBM Plex Sans Variable"') && document.fonts.check('12px "IBM Plex Mono"');
   })).toBe(true);
+  await page.getByRole('tab', { name: 'Info', exact: true }).click();
   await expect(page.getByTestId('frame-timings')).not.toContainText('--');
   await expect(page.getByTestId('send-to-canvas')).toHaveText(/^\d+ ms$/);
   const first = await pixelSummary(page);
@@ -55,6 +56,7 @@ test('real DICOM, CUDA frames, interaction, presets, PNG export and responsive c
   await page.getByLabel('Series', { exact: true }).selectOption('series-1');
   await page.getByRole('button', { name: 'Load series', exact: true }).click();
   await expect(page.locator('.geometry')).toContainText('64 × 64 × 64', { timeout: 30000 });
+  await page.getByRole('tab', { name: 'Display', exact: true }).click();
   await ready(page);
   const before = await pixelSummary(page);
   const viewbar = page.getByRole('group', { name: 'Standard views', exact: true });
@@ -96,6 +98,7 @@ test('real DICOM, CUDA frames, interaction, presets, PNG export and responsive c
   const catalog = await catalogResponse.json() as { presets: AppearancePreset[] };
   expect(catalog.presets).toHaveLength(8);
   const checksums = new Set<number>();
+  await page.getByText('Lighting and background', { exact: true }).click();
   for (const preset of catalog.presets) {
     const previousSequence = await page.locator('.viewport-bottom-right .mono').innerText();
     await page.getByRole('combobox', { name: 'Transfer preset' }).selectOption(preset.id);

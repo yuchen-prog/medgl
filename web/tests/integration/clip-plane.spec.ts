@@ -88,6 +88,7 @@ test('glass plane rotates, advances, clips on GPU, restores, exports without too
   await finalFrame(page);
   await changed(page, () => page.getByRole('combobox', { name: 'Render size' }).selectOption('50%'));
   const original = await pixels(page);
+  await page.getByRole('tab', { name: 'Crop', exact: true }).click();
   const enable = page.getByRole('checkbox', { name: 'Enable clipping plane', exact: true });
   await expect(enable).toBeEnabled();
   await changed(page, () => enable.check());
@@ -105,6 +106,7 @@ test('glass plane rotates, advances, clips on GPU, restores, exports without too
   await expect(overlay).toHaveCount(0);
   expect(errors).toEqual([]);
   await changed(page, () => enable.check());
+  await page.getByText('Precision settings', { exact: true }).click();
   const beforeDrag = (await displayedFrame()).clipPlane!.normal;
   await changed(page, () => dragHandle(page, 'red'));
   expect((await displayedFrame()).clipPlane!.normal).not.toEqual(beforeDrag);
@@ -200,7 +202,9 @@ test('glass handles and empty-space camera gestures keep independent ownership',
   await page.goto('/');
   await finalFrame(page);
   await changed(page, () => page.getByRole('combobox', { name: 'Render size' }).selectOption('50%'));
+  await page.getByRole('tab', { name: 'Crop', exact: true }).click();
   await changed(page, () => page.getByRole('checkbox', { name: 'Enable clipping plane', exact: true }).check());
+  await page.getByText('Precision settings', { exact: true }).click();
   const overlay = page.getByTestId('glass-overlay');
   await expect(page.getByRole('button', { name: 'Rotate clipping plane', exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Move clipping plane', exact: true })).toHaveCount(0);

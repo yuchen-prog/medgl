@@ -148,6 +148,7 @@ test('phantom render, rotate, pan, zoom, styles, reset and final PNG export', as
   await page.getByRole('button', { name: 'Reset camera' }).click();
   await expectReady(page);
   await expect(page.getByTestId('orientation-top')).toHaveText('P');
+  await page.getByText('Lighting and background', { exact: true }).click();
   for (const preset of [
     { id: 'ct-heart', width: 800, level: 200 },
     { id: 'ct-skin', width: 800, level: -200 },
@@ -285,4 +286,39 @@ test('a missing frame times out without a permanent pending spinner', async ({ p
   const alert = (await page.getByRole('alert').boundingBox())!;
   await expect.poll(async () => (await page.locator('.viewport-top-left').boundingBox())!.y).toBeGreaterThan(alert.y + alert.height);
   await page.screenshot({ path: 'test-results/workstation-timeout.png' });
+});
+
+test('icon tabs keep common controls visible and support keyboard navigation without changing view state', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  const service = await mockService(page);
+  await page.goto('/');
+  await expectReady(page);
+  const tabs = page.getByRole('tablist', { name: 'Settings categories' });
+  await expect(tabs.getByRole('tab')).toHaveCount(3);
+  for (const name of ['Display', 'Crop', 'Info']) await expect(tabs.getByRole('tab', { name, exact: true }).locator('svg')).toHaveCount(1);
+  await expect(page.getByRole('tab', { name: 'Display', exact: true })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByTestId('frame-timings')).toBeHidden();
+  for (const name of ['Window width', 'Window level', 'Opacity scale']) {
+    const bounds = (await page.getByRole('spinbutton', { name, exact: true }).boundingBox())!;
+    expect(bounds.y + bounds.height).toBeLessThan(960);
+  }
+  await expect(page.getByRole('region', { name: 'Transfer function editor', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Edit transfer function', exact: true })).toBeDisabled();
+  const initialView = service.renders.at(-1);
+  await page.getByRole('tab', { name: 'Display', exact: true }).focus();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByRole('tab', { name: 'Crop', exact: true })).toBeFocused();
+  await expect(page.getByTestId('frame-timings')).toBeHidden();
+  await expect(page.getByRole('checkbox', { name: 'Enable clipping plane', exact: true })).toBeVisible();
+  await expect(page.getByRole('spinbutton', { name: 'Plane position', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('spinbutton', { name: 'Columns (X) from', exact: true })).toHaveCount(0);
+  await page.keyboard.press('End');
+  await expect(page.getByRole('tab', { name: 'Info', exact: true })).toBeFocused();
+  await expect(page.locator('.geometry')).toBeVisible();
+  await expect(page.getByTestId('frame-timings')).toBeVisible();
+  await page.keyboard.press('Home');
+  await expect(page.getByRole('tab', { name: 'Display', exact: true })).toBeFocused();
+  expect(service.renders.at(-1)?.camera).toEqual(initialView?.camera);
+  expect(service.renders.at(-1)?.style).toEqual(initialView?.style);
+  await page.screenshot({ path: 'test-results/settings-tabs-desktop.png' });
 });
