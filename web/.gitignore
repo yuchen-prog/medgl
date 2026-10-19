@@ -1,0 +1,11 @@
+test-results-real/
+test-results-package/
+node_modules/
+dist/
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+coverage/
+*.tsbuildinfo
+*.local

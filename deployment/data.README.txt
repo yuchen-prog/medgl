@@ -1,0 +1,3 @@
+No patient data is included. The default data directory contains only this notice.
+Use start-medgl.ps1 -DataRoot with an authorized external CT directory.
+Do not put medical images under the web directory or distribute them in this package.

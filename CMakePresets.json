@@ -1,0 +1,80 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "v1-release",
+      "displayName": "Windows CUDA VR with DICOM and B/S service",
+      "inherits": "cuda-release",
+      "toolchainFile": "${sourceDir}/out/tools/vcpkg/scripts/buildsystems/vcpkg.cmake",
+      "cacheVariables": { "MEDGL_BUILD_APP": "ON", "VCPKG_TARGET_TRIPLET": "x64-windows" }
+    },
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BUILD_TESTING": "ON"
+      }
+    },
+    {
+      "name": "host-only",
+      "displayName": "Windows C++ validation only (no CUDA or rendering)",
+      "inherits": "windows-base",
+      "cacheVariables": { "MEDGL_ENABLE_CUDA": "OFF" }
+    },
+    {
+      "name": "cuda-debug",
+      "displayName": "Windows CUDA Debug",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "MEDGL_ENABLE_CUDA": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "89"
+      }
+    },
+    {
+      "name": "cuda-release",
+      "displayName": "Windows CUDA Release",
+      "inherits": "windows-base",
+      "cacheVariables": {
+        "MEDGL_ENABLE_CUDA": "ON",
+        "CMAKE_CUDA_ARCHITECTURES": "89",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "v1-release", "configurePreset": "v1-release" },
+    { "name": "host-only", "configurePreset": "host-only" },
+    { "name": "cuda-debug", "configurePreset": "cuda-debug" },
+    { "name": "cuda-release", "configurePreset": "cuda-release" }
+  ],
+  "testPresets": [
+    {
+      "name": "v1-release",
+      "configurePreset": "v1-release",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "host-only",
+      "configurePreset": "host-only",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "cuda-debug",
+      "configurePreset": "cuda-debug",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    },
+    {
+      "name": "cuda-release",
+      "configurePreset": "cuda-release",
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error" }
+    }
+  ]
+}

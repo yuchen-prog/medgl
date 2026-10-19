@@ -1,0 +1,21 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "MedGL: Start Test Site",
+			"type": "shell",
+			"command": ".\\scripts\\start-medgl.ps1",
+			"args": [
+				"-DataRoot",
+				".\\data\\PID00001",
+				"-Port",
+				"8081",
+				"-PngCompression",
+				"fast",
+				"-AllowInstanceUidMismatch"
+			],
+			"isBackground": true,
+			"problemMatcher": []
+		}
+	]
+}

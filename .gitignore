@@ -1,0 +1,58 @@
+# Patient data and generated diagnostics
+/out/
+/data/
+*.[dD][cC][mM]
+*.[dD][iI][cC][oO][mM]
+
+# Native dependencies and local build configuration
+/.vs/
+/vcpkg_installed/
+/CMakeUserPresets.json
+/build/
+/build-*/
+/cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+build.ninja
+.ninja_deps
+.ninja_log
+/_deps/
+/Testing/
+
+# Native compiler and debugger output
+*.obj
+*.o
+*.lib
+*.a
+*.exe
+*.dll
+*.exp
+*.pdb
+*.ilk
+*.idb
+*.pch
+*.ipch
+*.tlog
+*.VC.db
+*.VC.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Local secrets; keep sanitized examples versionable
+.env
+.env.*
+!.env.example
+!.env.*.example
+!.env.sample
+!.env.template
+
+# Logs, caches, and operating system metadata
+*.log
+.cache/
+.DS_Store
+Thumbs.db
+Desktop.ini
