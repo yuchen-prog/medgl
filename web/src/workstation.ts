@@ -1,7 +1,9 @@
 import * as api from './api';
 import { FramePresenter } from './frames';
-import { applyAppearancePreset, defaultClipPlane, fullCropBox, parseClipPlane, parseCropBox } from './protocol';
-import type { AppearancePreset, Camera, ClipPlane, CropBox, FrameMeta, Quality, RenderRequest, RenderStyle, Series, Session } from './protocol';
+import { applyAppearancePreset, defaultClipPlane, fullCropBox, parseClipPlane, parseCropBox, parseStyle, parseTransferFunction } from './protocol';
+import type { AppearancePreset, Camera, ClipPlane, CropBox, FrameMeta, Quality, RenderRequest, RenderStyle, Series, Session, TransferPoint } from './protocol';
+import { parseSavedPresets, PRESET_STORAGE_KEY } from './transfer';
+import type { SavedPreset } from './transfer';
 
 export interface WorkstationState {
   phase: 'idle' | 'catalog' | 'loading' | 'ready' | 'closing' | 'error';
@@ -20,6 +22,9 @@ export interface WorkstationState {
   catalogError: string | null;
   presets: AppearancePreset[];
   presetError: string | null;
+  customPresets: SavedPreset[];
+  customPresetId: string | null;
+  storageError: string | null;
   width: number;
   height: number;
 }
@@ -27,7 +32,8 @@ export interface WorkstationState {
 const initialState: WorkstationState = {
   phase: 'idle', connection: 'offline', series: [], selectedId: 'phantom', activeSeries: null,
   session: null, camera: null, style: null, cropBox: null, clipPlane: null, frame: null, rendering: false,
-  error: null, catalogError: null, width: 1, height: 1, presets: [], presetError: null
+  error: null, catalogError: null, width: 1, height: 1, presets: [], presetError: null,
+  customPresets: [], customPresetId: null, storageError: null
 };
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : 'Unexpected service error';
@@ -76,6 +82,7 @@ export class WorkstationClient {
     this.live = true;
     await this.operations;
     if (!this.live) return;
+    this.restoreCustomPresets();
     await Promise.all([this.refreshPresets(), this.refreshCatalog(true)]);
   }
 
@@ -90,10 +97,66 @@ export class WorkstationClient {
   }
 
   applyPreset(presetId: string): void {
+    if (!this.state.style || this.state.phase !== 'ready') return;
     const preset = this.state.presets.find(item => item.id === presetId);
-    if (preset && this.state.style && this.state.phase === 'ready') {
+    if (preset) {
       this.setStyle(applyAppearancePreset(this.state.style, preset));
+      this.patch({ customPresetId: null });
+    } else {
+      const saved = this.state.customPresets.find(item => item.id === presetId);
+      if (saved && this.state.session?.transferFunctionSupported && this.state.presets.some(item => item.id === saved.style.presetId)) {
+        this.setStyle({ ...structuredClone(saved.style), backgroundRgb: [...this.state.style.backgroundRgb] });
+        this.patch({ customPresetId: saved.id });
+      }
     }
+  }
+
+  private restoreCustomPresets(): void {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      const saved = localStorage.getItem(PRESET_STORAGE_KEY);
+      this.patch({ customPresets: saved ? parseSavedPresets(saved) : [], storageError: null });
+    } catch { this.patch({ storageError: 'Local presets could not be read. Stored data was not changed.' }); }
+  }
+
+  private storeCustomPresets(presets: SavedPreset[]): boolean {
+    try {
+      localStorage.setItem(PRESET_STORAGE_KEY, JSON.stringify({ version: 1, presets }));
+      this.patch({ customPresets: presets, storageError: null });
+      return true;
+    } catch {
+      this.patch({ storageError: 'Local presets could not be saved. Check browser storage permissions or available space.' });
+      return false;
+    }
+  }
+
+  saveCustomPreset(name: string): void {
+    const style = this.state.style;
+    if (this.state.phase !== 'ready' || !this.state.session?.transferFunctionSupported || !style?.transferFunction) return;
+    if (!name.trim() || name.trim().length > 64 || this.state.customPresets.length >= 32) {
+      this.patch({ storageError: 'Enter a name (1-64 characters). Up to 32 local presets can be saved.' });
+      return;
+    }
+    const saved: SavedPreset = { id: `local-${crypto.randomUUID()}`, name: name.trim(),
+      style: { ...structuredClone(style), backgroundRgb: [0, 0, 0] } };
+    if (this.storeCustomPresets([...this.state.customPresets, saved])) this.patch({ customPresetId: saved.id });
+  }
+
+  deleteCustomPreset(): void {
+    const id = this.state.customPresetId;
+    if (!id) return;
+    if (this.storeCustomPresets(this.state.customPresets.filter(preset => preset.id !== id)))
+      this.patch({ customPresetId: null });
+  }
+
+  setTransferFunction(points: TransferPoint[]): void {
+    if (!this.state.session?.transferFunctionSupported || !this.state.style) return;
+    this.setStyle({ ...this.state.style, transferFunction: parseTransferFunction(points) });
+  }
+
+  resetTransferFunction(): void {
+    const preset = this.state.presets.find(item => item.id === this.state.style?.presetId);
+    if (preset?.transferFunction) this.setTransferFunction(preset.transferFunction);
   }
 
   async refreshCatalog(autoPhantom = false): Promise<void> {
@@ -127,7 +190,8 @@ export class WorkstationClient {
         await this.releaseSession();
         if (!this.live || generation !== this.generation) return;
         this.lastLatencyMs = null;
-        this.patch({ phase: 'loading', session: null, camera: null, style: null, cropBox: null, clipPlane: null, frame: null, activeSeries: series });
+        this.patch({ phase: 'loading', session: null, camera: null, style: null, cropBox: null, clipPlane: null,
+          customPresetId: null, frame: null, activeSeries: series });
         const created = await api.createSession(seriesId);
         this.ownedSessionId = created.sessionId;
         if (!this.live || generation !== this.generation) {
@@ -282,7 +346,7 @@ export class WorkstationClient {
 
   setStyle(style: RenderStyle): void {
     if (this.state.phase !== 'ready') return;
-    this.patch({ style });
+    this.patch({ style: structuredClone(parseStyle(style)) });
     this.scheduleRender();
   }
 
@@ -358,8 +422,10 @@ export class WorkstationClient {
       this.previewTimer = undefined;
     }
     const seq = ++this.sequence.current;
+    const outgoingStyle = { ...style };
+    if (!session.transferFunctionSupported) delete outgoingStyle.transferFunction;
     const request: RenderRequest = { type: 'render', seq, sceneRevision: session.sceneRevision,
-      quality, width, height, camera, style,
+      quality, width, height, camera, style: outgoingStyle,
       ...(session.cropBoxSupported && this.state.cropBox ? { cropBox: this.state.cropBox } : {}),
       ...(session.clipPlaneSupported && this.state.clipPlane ? { clipPlane: this.state.clipPlane } : {}) };
     try {

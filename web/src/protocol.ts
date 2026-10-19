@@ -16,6 +16,19 @@ export interface RenderStyle {
   opacityScale: number;
   lighting?: boolean;
   backgroundRgb: Vec3;
+  transferFunction?: TransferPoint[];
+}
+
+export interface TransferPoint {
+  position: number;
+  rgba: [number, number, number, number];
+}
+
+export interface Histogram {
+  minimum: number;
+  maximum: number;
+  counts: number[];
+  voxelCount: number;
 }
 
 export interface CropBox {
@@ -47,6 +60,7 @@ export interface AppearancePreset {
   opacityScale: number;
   lighting: boolean;
   colors: Vec3[];
+  transferFunction?: TransferPoint[];
 }
 
 export interface Series {
@@ -66,6 +80,8 @@ export interface Session {
   initial?: { camera: Camera; style: RenderStyle; cropBox?: CropBox; clipPlane?: ClipPlane };
   cropBoxSupported?: boolean;
   clipPlaneSupported?: boolean;
+  transferFunctionSupported?: boolean;
+  histogram?: Histogram;
   standardViews?: StandardView[];
   loadTimings?: LoadTimings;
 }
@@ -127,6 +143,7 @@ export interface FrameMeta {
   cropBox?: CropBox;
   clipPlane?: ClipPlane;
   timings?: RenderTimings;
+  transferFunction?: TransferPoint[];
   presentationTimings?: PresentationTimings;
 }
 
@@ -196,7 +213,34 @@ export function parseStyle(value: unknown): RenderStyle {
       !tuple(style.backgroundRgb, 3) || style.backgroundRgb.some(channel => channel < 0 || channel > 1)) {
     throw new Error('Invalid render style');
   }
+  if (style.transferFunction !== undefined) return { ...style,
+    transferFunction: parseTransferFunction(style.transferFunction) } as unknown as RenderStyle;
   return style as unknown as RenderStyle;
+}
+
+export function parseTransferFunction(value: unknown): TransferPoint[] {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 64) throw new Error('Invalid transfer function');
+  let previous = -1;
+  return value.map(item => {
+    const point = record(item);
+    if (!finite(point.position) || point.position < 0 || point.position > 1 || point.position <= previous ||
+        !tuple(point.rgba, 4) || point.rgba.some(channel => channel < 0 || channel > 1))
+      throw new Error('Invalid transfer function');
+    previous = point.position;
+    return { position: point.position, rgba: [...point.rgba] as TransferPoint['rgba'] };
+  });
+}
+
+export function parseHistogram(value: unknown): Histogram {
+  const histogram = record(value);
+  if (!finite(histogram.minimum) || !finite(histogram.maximum) || histogram.minimum > histogram.maximum ||
+      !Array.isArray(histogram.counts) || histogram.counts.length !== 256 ||
+      histogram.counts.some(count => !finite(count) || !Number.isSafeInteger(count) || count < 0) ||
+      !positiveInteger(histogram.voxelCount, 256 * 1024 * 1024) ||
+      histogram.counts.reduce((sum: number, count: number) => sum + count, 0) !== histogram.voxelCount)
+    throw new Error('Invalid intensity histogram');
+  return { minimum: histogram.minimum, maximum: histogram.maximum,
+    counts: [...histogram.counts] as number[], voxelCount: histogram.voxelCount };
 }
 
 export function parseCatalog(value: unknown): Series[] {
@@ -234,13 +278,18 @@ export function parsePresetCatalog(value: unknown): AppearancePreset[] {
       throw new Error('Invalid appearance preset');
     }
     ids.add(preset.id);
+    if (preset.transferFunction !== undefined) return { ...preset,
+      transferFunction: parseTransferFunction(preset.transferFunction) } as unknown as AppearancePreset;
     return preset as unknown as AppearancePreset;
   });
 }
 
 export function applyAppearancePreset(style: RenderStyle, preset: AppearancePreset): RenderStyle {
-  return { ...style, presetId: preset.id, windowWidth: preset.windowWidth,
+  const result = { ...style, presetId: preset.id, windowWidth: preset.windowWidth,
     windowLevel: preset.windowLevel, opacityScale: preset.opacityScale, lighting: preset.lighting };
+  delete result.transferFunction;
+  if (preset.transferFunction) result.transferFunction = parseTransferFunction(preset.transferFunction);
+  return result;
 }
 
 export function parseSession(value: unknown): Session {
@@ -253,6 +302,7 @@ export function parseSession(value: unknown): Session {
     const initial = record(session.initial);
     if ((session.cropBoxSupported !== undefined && typeof session.cropBoxSupported !== 'boolean') ||
       (session.clipPlaneSupported !== undefined && typeof session.clipPlaneSupported !== 'boolean') ||
+      (session.transferFunctionSupported !== undefined && typeof session.transferFunctionSupported !== 'boolean') ||
       !positiveInteger(session.sceneRevision) || !tuple(volume.dimensions, 3) ||
         !volume.dimensions.every(dimension => positiveInteger(dimension)) ||
         !tuple(volume.spacing, 3) || volume.spacing.some(spacing => spacing <= 0)) {
@@ -266,6 +316,8 @@ export function parseSession(value: unknown): Session {
         clipPlane: initial.clipPlane === undefined ? undefined : parseClipPlane(initial.clipPlane) },
       cropBoxSupported: session.cropBoxSupported === true,
       clipPlaneSupported: session.clipPlaneSupported === true,
+      transferFunctionSupported: session.transferFunctionSupported === true,
+      histogram: session.histogram === undefined ? undefined : parseHistogram(session.histogram),
       standardViews: session.standardViews === undefined ? undefined : parseStandardViews(session.standardViews),
       loadTimings: session.loadTimings === undefined ? undefined : timings(session.loadTimings,
         ['queueMs', 'dataLoadMs', 'validationMs', 'uploadMs', 'workerMs']) as unknown as LoadTimings
@@ -310,6 +362,7 @@ export function parseFramePacket(buffer: ArrayBuffer): { meta: FrameMeta; image:
     meta: { ...meta, camera: meta.camera === undefined ? undefined : parseCamera(meta.camera),
       cropBox: meta.cropBox === undefined ? undefined : parseCropBox(meta.cropBox),
       clipPlane: meta.clipPlane === undefined ? undefined : parseClipPlane(meta.clipPlane),
+      transferFunction: meta.transferFunction === undefined ? undefined : parseTransferFunction(meta.transferFunction),
       timings: meta.timings === undefined ? undefined : timings(meta.timings,
         ['prepareMs', 'kernelMs', 'kernelWallMs', 'readbackMs', 'totalMs', 'encodeMs', 'queueMs']) } as unknown as FrameMeta,
     image: new Blob([buffer.slice(4 + jsonLength)], { type: `image/${meta.encoding}` })

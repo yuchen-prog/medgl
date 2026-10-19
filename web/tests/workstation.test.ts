@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as api from '../src/api';
 import { WorkstationClient } from '../src/workstation';
 import { defaultClipPlane, fullCropBox } from '../src/protocol';
+import { PRESET_STORAGE_KEY } from '../src/transfer';
 import type { RenderRequest, Session } from '../src/protocol';
 
 vi.mock('../src/api', () => ({
@@ -67,6 +68,59 @@ afterEach(async () => {
 });
 
 describe('session ownership and render scheduling', () => {
+  it('does not send edited transfer curves to an older service', async () => {
+    const instance = client();
+    await instance.start(); await flush();
+    instance.setTransferFunction([{ position: 0, rgba: [0, 0, 0, 0] }, { position: 1, rgba: [1, 1, 1, 1] }]);
+    const socket = FakeSocket.instances[0]!;
+    socket.open();
+    expect(instance.getSnapshot().style?.transferFunction).toBeUndefined();
+    expect(JSON.parse(socket.send.mock.calls[0]![0] as string).style).not.toHaveProperty('transferFunction');
+  });
+  it('preserves edited curves on view/crop/reconnect, restores presets, saves locally and resets on a new series', async () => {
+    const points = [{ position: 0, rgba: [0, 0, 0, 0] as [number, number, number, number] },
+      { position: 1, rgba: [1, 1, 1, 0.2] as [number, number, number, number] }];
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value) });
+    vi.mocked(api.createSession).mockResolvedValue({ ...ready, transferFunctionSupported: true,
+      initial: { ...ready.initial!, style: { ...ready.initial!.style, transferFunction: points } } });
+    vi.mocked(api.appearancePresets).mockResolvedValue([{ ...heartPreset, transferFunction: points },
+      { ...heartPreset, id: 'ct-bone', name: 'CT / Bone', transferFunction: points }]);
+    const instance = client();
+    await instance.start(); await flush();
+    const socket = FakeSocket.instances[0]!;
+    socket.open();
+    instance.setTransferFunction([{ ...points[0]! }, { position: 1, rgba: [1, 0, 0, 0.4] }]);
+    instance.setStandardView('anterior');
+    await vi.advanceTimersByTimeAsync(200);
+    const edited = structuredClone(instance.getSnapshot().style!.transferFunction);
+    expect(JSON.parse(socket.send.mock.calls.at(-1)![0] as string).style.transferFunction).toEqual(edited);
+    instance.reconnect(); FakeSocket.instances.at(-1)!.open();
+    expect(instance.getSnapshot().style!.transferFunction).toEqual(edited);
+    instance.saveCustomPreset('My bone');
+    const saved = instance.getSnapshot().customPresets[0]!;
+    expect(storage.get(PRESET_STORAGE_KEY)).not.toMatch(/sessionId|histogram|voxels|targetMm/);
+    instance.applyPreset('ct-heart');
+    expect(instance.getSnapshot().style!.transferFunction).toEqual(points);
+    instance.applyPreset(saved.id);
+    expect(instance.getSnapshot().style!.transferFunction).toEqual(edited);
+    expect(instance.getSnapshot().style!.presetId).toBe('ct-bone');
+    instance.setStyle({ ...instance.getSnapshot().style!, windowWidth: 2200, windowLevel: 550, lighting: false });
+    instance.resetTransferFunction();
+    expect(instance.getSnapshot().style).toMatchObject({ windowWidth: 2200, windowLevel: 550, lighting: false, transferFunction: points });
+    await instance.loadSeries('patient');
+    expect(instance.getSnapshot().customPresetId).toBeNull();
+    expect(instance.getSnapshot().style!.transferFunction).toEqual(points);
+    instance.applyPreset(saved.id);
+    instance.deleteCustomPreset();
+    expect(instance.getSnapshot().customPresets).toHaveLength(0);
+    vi.stubGlobal('localStorage', { getItem: () => '{broken', setItem: () => { throw new Error('denied'); } });
+    await instance.start();
+    expect(instance.getSnapshot().storageError).toContain('could not be read');
+    instance.saveCustomPreset('Retry');
+    expect(instance.getSnapshot().storageError).toContain('could not be saved');
+  });
   it('copies absolute planes, preserves them on view/preset/reconnect, resets for a new volume', async () => {
     vi.mocked(api.createSession).mockResolvedValue({ ...ready, clipPlaneSupported: true });
     const instance = client();

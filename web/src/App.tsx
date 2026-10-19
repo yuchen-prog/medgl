@@ -8,6 +8,8 @@ import type { InteractionMode } from './clip-plane';
 import type { CropBox, RenderStyle, Vec3 } from './protocol';
 import { WorkstationClient } from './workstation';
 import type { WorkstationState } from './workstation';
+import { TransferEditor } from './TransferEditor';
+import { colorHex } from './transfer';
 
 const GlassPlane = lazy(() => import('./GlassPlane').then(module => ({ default: module.GlassPlane })));
 
@@ -158,6 +160,7 @@ function Sidebar({ client, state, open, dismiss }: {
   const selected = state.series.find(series => series.id === state.selectedId);
   const style = state.style;
   const preset = state.presets.find(item => item.id === style?.presetId);
+  const savedPreset = state.customPresets.find(item => item.id === state.customPresetId);
   const setStyle = (patch: Partial<RenderStyle>) => {
     const current = client.getSnapshot().style;
     if (current) client.setStyle({ ...current, ...patch });
@@ -195,22 +198,27 @@ function Sidebar({ client, state, open, dismiss }: {
         <div className="section-heading"><h2>Appearance</h2><span className="section-index">01</span></div>
         <label className="field-label" htmlFor="preset">Transfer preset</label>
         <div className="preset-select-row">
-        <div className="select-wrap"><select id="preset" disabled={!ready || state.presets.length === 0} value={style?.presetId ?? 'ct-bone'}
+        <div className="select-wrap"><select id="preset" disabled={!ready || state.presets.length === 0} value={state.customPresetId ?? style?.presetId ?? 'ct-bone'}
           onChange={event => client.applyPreset(event.target.value)}>
           {!state.presets.length && <option value={style?.presetId ?? 'ct-bone'}>{style?.presetId ?? 'CT / Bone'}</option>}
           {style && state.presets.length > 0 && !preset && <option value={style.presetId}>{style.presetId}</option>}
           {state.presets.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
+          {state.customPresets.length > 0 && <optgroup label="Local presets">{state.customPresets.map(item => <option key={item.id}
+            disabled={!state.session?.transferFunctionSupported || !state.presets.some(base => base.id === item.style.presetId)}
+            value={item.id}>{item.name}</option>)}</optgroup>}
         </select><ChevronDown size={14} /></div>
         <IconButton label="Reset preset" disabled={!ready || !preset}
-          onClick={() => { if (preset) client.applyPreset(preset.id); }}><RotateCcw size={16} /></IconButton>
+          onClick={() => { if (preset) client.applyPreset(savedPreset?.id ?? preset.id); }}><RotateCcw size={16} /></IconButton>
         </div>
-        {preset && <div className="preset-colors" role="img" aria-label={`${preset.name} color table`}>
-          {preset.colors.map((color, index) => <span key={index}
+        {preset && <div className="preset-colors" role="img" aria-label={`${savedPreset?.name ?? preset.name} color table`}
+          style={style?.transferFunction ? { background: `linear-gradient(to right, ${style.transferFunction.map(point => `${colorHex(point.rgba)} ${point.position * 100}%`).join(', ')})` } : undefined}>
+          {!style?.transferFunction && preset.colors.map((color, index) => <span key={index}
             style={{ backgroundColor: `rgb(${color.map(channel => Math.round(channel * 255)).join(' ')})` }} />)}
         </div>}
         {state.presetError && <div className="preset-error"><p className="inline-error" role="alert">{state.presetError}</p>
           <IconButton label="Retry presets" onClick={() => void client.refreshPresets()}><RefreshCw size={15} /></IconButton>
         </div>}
+        <TransferEditor key={`${state.session?.sessionId}:${state.customPresetId ?? style?.presetId}`} client={client} state={state} />
         <Parameter id="window-width" label="Window width" value={style?.windowWidth ?? 1800} min={1} max={5000}
           suffix="HU" disabled={!ready} change={windowWidth => setStyle({ windowWidth })} finish={() => client.finishInteraction()} />
         <Parameter id="window-level" label="Window level" value={style?.windowLevel ?? 400} min={-1500} max={3000}

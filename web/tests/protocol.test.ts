@@ -16,6 +16,12 @@ function packet(overrides: Record<string, unknown> = {}): ArrayBuffer {
 }
 
 describe('binary frame protocol', () => {
+  it('parses actual curve snapshots and rejects invalid points without requiring newer fields', () => {
+    const curve = [{ position: 0, rgba: [0, 0, 0, 0] }, { position: 1, rgba: [1, 1, 1, 0.2] }];
+    expect(parseFramePacket(packet({ transferFunction: curve })).meta.transferFunction).toEqual(curve);
+    expect(parseFramePacket(packet()).meta.transferFunction).toBeUndefined();
+    expect(() => parseFramePacket(packet({ transferFunction: [curve[1], curve[0]] }))).toThrow();
+  });
   it('validates plane snapshots and accepts older frames', () => {
     const plane = { enabled: true, normal: [0.6, 0.8, 0], offsetMm: 12, keepPositive: false };
     expect(parseFramePacket(packet({ clipPlane: plane })).meta.clipPlane).toEqual(plane);
@@ -97,6 +103,15 @@ describe('HTTP contracts', () => {
         style: { presetId: 'ct-bone', windowWidth: 1000, windowLevel: 400, opacityScale: 1, backgroundRgb: [0, 0, 0] }
       }, loadTimings: { queueMs: 1, dataLoadMs: 2, validationMs: 3, uploadMs: 4, workerMs: 10 } };
     expect(parseSession(ready).loadTimings).toEqual(ready.loadTimings);
+    const histogram = { minimum: -1000, maximum: 1000, counts: [24, ...Array<number>(255).fill(0)], voxelCount: 24 };
+    const curve = [{ position: 0, rgba: [0, 0, 0, 0] }, { position: 1, rgba: [1, 1, 1, 0.2] }];
+    expect(parseSession({ ...ready, histogram, transferFunctionSupported: true,
+      initial: { ...ready.initial, style: { ...ready.initial.style, transferFunction: curve } } })).toMatchObject({
+        histogram, transferFunctionSupported: true, initial: { style: { transferFunction: curve } }
+      });
+    expect(parseSession(ready).transferFunctionSupported).toBe(false);
+    expect(() => parseSession({ ...ready, transferFunctionSupported: 'true' })).toThrow();
+    expect(() => parseSession({ ...ready, histogram: { ...histogram, voxelCount: 25 } })).toThrow();
     expect(parseSession({ ...ready, clipPlaneSupported: true,
       initial: { ...ready.initial, clipPlane: defaultClipPlane() } }).initial?.clipPlane).toEqual(defaultClipPlane());
     expect(parseSession(ready).clipPlaneSupported).toBe(false);
@@ -116,6 +131,9 @@ describe('HTTP contracts', () => {
     const preset = { id: 'ct-heart', name: 'CT / Heart (contrast)', windowWidth: 800,
       windowLevel: 200, opacityScale: 1, lighting: true, colors: [[0, 0, 0], [1, 0.3, 0.2]] };
     expect(parsePresetCatalog({ presets: [preset] })).toEqual([preset]);
+    const curve = [{ position: 0, rgba: [0, 0, 0, 0] }, { position: 1, rgba: [1, 1, 1, 0.2] }];
+    expect(parsePresetCatalog({ presets: [{ ...preset, transferFunction: curve }] })[0]?.transferFunction).toEqual(curve);
+    expect(() => parsePresetCatalog({ presets: [{ ...preset, transferFunction: [] }] })).toThrow();
     for (const override of [{ windowWidth: 0 }, { windowLevel: NaN }, { opacityScale: -1 },
       { lighting: 'true' }, { colors: [[0, 0, 0], [2, 0, 0]] }, { colors: [[0, 0, 0]] }]) {
       expect(() => parsePresetCatalog({ presets: [{ ...preset, ...override }] })).toThrow();

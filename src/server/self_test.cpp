@@ -202,9 +202,31 @@ void ProtocolChecks() {
     Check(Preset("ct-soft").size() == Preset("ct-soft-tissue").size());
     Check(Preset("ct-lung").back().rgba[3] == 0);
     Check(PresetCatalogJson().at("presets").size() == AppearancePresets().size());
+    medgl::VolumeData histogramVolume;
+    histogramVolume.voxels = {-1024, -1024, 0, 512, 1024};
+    const auto histogram = VolumeHistogramJson(histogramVolume);
+    Check(histogram.at("minimum") == -1024 && histogram.at("maximum") == 1024);
+    Check(histogram.at("voxelCount") == 5 && histogram.at("counts").size() == 256);
+    Check(histogram.at("counts")[0] == 2 && histogram.at("counts")[128] == 1
+        && histogram.at("counts")[192] == 1 && histogram.at("counts")[255] == 1);
+    histogramVolume.voxels = {12.5f, 12.5f};
+    const auto constantHistogram = VolumeHistogramJson(histogramVolume);
+    Check(constantHistogram.at("minimum") == 12.5 && constantHistogram.at("maximum") == 12.5
+        && constantHistogram.at("counts")[0] == 2);
+    histogramVolume.voxels = {};
+    Rejected([&] { VolumeHistogramJson(histogramVolume); });
+    histogramVolume.voxels = {std::numeric_limits<float>::quiet_NaN()};
+    Rejected([&] { VolumeHistogramJson(histogramVolume); });
+    const auto presetCatalog = PresetCatalogJson();
+    for (const auto& preset : presetCatalog.at("presets")) {
+        auto roundtrip = Request(1);
+        roundtrip["style"]["presetId"] = preset.at("id");
+        roundtrip["style"]["transferFunction"] = preset.at("transferFunction");
+        Check(TransferJson(ParseRender(roundtrip).settings.transfer) == preset.at("transferFunction"));
+    }
     Rejected([] { FindPreset("nonexistent"); });
     const auto initialStyle = StyleJson(parsed.settings);
-    Check(!initialStyle.contains("transferFunction"));
+    Check(initialStyle.at("transferFunction") == TransferJson(parsed.settings.transfer));
     Check(StandardViewsJson().size() == 6);
     Check(StandardViewsJson()[0].at("id") == "anterior");
     auto message = Request(2, "preview");

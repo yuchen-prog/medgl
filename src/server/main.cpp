@@ -916,11 +916,12 @@ void Server::BeginLoad(const std::shared_ptr<Session>& session) {
             if (!session->closing.load()) {
                 auto volume = session->seriesId == "phantom" ? MakePhantom() :
                                                               self->catalog_->Load(session->seriesId);
-                const double dataLoadMs = ElapsedMs(workerStart);
                 if (!session->closing.load()) {
                     if (volume.voxels.size() > 256ULL * 1024 * 1024) {
                         throw InputError("Volume exceeds the configured memory limit.");
                     }
+                    const auto histogram = VolumeHistogramJson(volume);
+                    const double dataLoadMs = ElapsedMs(workerStart);
                     auto initial = FitView(volume);
                     ApplyPreset(initial, "ct-bone");
                     session->renderer = std::make_unique<VolumeRenderer>();
@@ -938,6 +939,7 @@ void Server::BeginLoad(const std::shared_ptr<Session>& session) {
                                     {"standardViews", StandardViewsJson()},
                                     {"cropBoxSupported", true},
                                     {"clipPlaneSupported", true},
+                                    {"transferFunctionSupported", true}, {"histogram", histogram},
                                     {"loadTimings", {{"queueMs", queueMs}, {"dataLoadMs", dataLoadMs},
                                         {"validationMs", upload.validationMs}, {"uploadMs", upload.uploadMs},
                                         {"workerMs", ElapsedMs(workerStart)}}},
@@ -1034,6 +1036,7 @@ std::shared_ptr<Frame> EncodeFrame(const std::string& id, const RenderRequest& r
                         {"camera", CameraJson(request.settings)},
                         {"cropBox", CropBoxJson(request.settings)},
                         {"clipPlane", ClipPlaneJson(request.settings)},
+                        {"transferFunction", TransferJson(request.settings.transfer)},
                         {"timings", {{"prepareMs", timings.prepareMs}, {"kernelMs", timings.kernelMs},
                             {"kernelWallMs", timings.kernelWallMs}, {"readbackMs", timings.readbackMs},
                             {"totalMs", timings.totalMs}, {"encodeMs", encodeMs}, {"queueMs", queueMs}}},

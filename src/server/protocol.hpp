@@ -117,6 +117,31 @@ inline void ApplyPreset(RenderSettings& settings, const std::string& name) {
     settings.lighting = preset.lighting;
 }
 
+inline Json TransferJson(const std::vector<TransferPoint>& points) {
+    Json result = Json::array();
+    for (const auto& point : points) result.push_back({{"position", point.position}, {"rgba", point.rgba}});
+    return result;
+}
+
+inline Json VolumeHistogramJson(const VolumeData& volume) {
+    if (volume.voxels.empty()) throw InputError("Histogram requires a volume");
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = -minimum;
+    for (float value : volume.voxels) {
+        if (!std::isfinite(value)) throw InputError("Histogram requires finite intensities");
+        minimum = std::min(minimum, static_cast<double>(value));
+        maximum = std::max(maximum, static_cast<double>(value));
+    }
+    std::array<std::uint64_t, 256> counts{};
+    for (float value : volume.voxels) {
+        const auto index = maximum == minimum ? 0 : std::min<std::size_t>(255,
+            static_cast<std::size_t>((value - minimum) / (maximum - minimum) * counts.size()));
+        ++counts[index];
+    }
+    return {{"minimum", minimum}, {"maximum", maximum}, {"counts", counts},
+        {"voxelCount", volume.voxels.size()}};
+}
+
 inline Json PresetCatalogJson() {
     Json catalog = Json::array();
     for (const auto& preset : AppearancePresets()) {
@@ -126,7 +151,7 @@ inline Json PresetCatalogJson() {
         catalog.push_back({{"id", preset.id}, {"name", preset.name},
             {"windowWidth", preset.windowWidth}, {"windowLevel", preset.windowLevel},
             {"opacityScale", preset.opacityScale}, {"lighting", preset.lighting},
-            {"colors", std::move(colors)}});
+            {"colors", std::move(colors)}, {"transferFunction", TransferJson(preset.transfer)}});
     }
     return {{"presets", std::move(catalog)}};
 }
@@ -273,7 +298,8 @@ inline Json StandardViewsJson() {
 inline Json StyleJson(const RenderSettings& settings) {
     return {{"presetId", "ct-bone"}, {"windowWidth", settings.windowWidth},
             {"windowLevel", settings.windowLevel}, {"opacityScale", settings.opacityScale},
-            {"lighting", settings.lighting}, {"backgroundRgb", settings.background}};
+            {"lighting", settings.lighting}, {"backgroundRgb", settings.background},
+            {"transferFunction", TransferJson(settings.transfer)}};
 }
 
 inline Json ErrorJson(const char* code, const char* message) {
