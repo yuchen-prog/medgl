@@ -122,6 +122,7 @@ export function TransferEditor({ client, state, close }: { client: WorkstationCl
           setDragScale(scale);
           drag.current = { id: event.pointerId, index, scale, bounds: chart.current.getBoundingClientRect(), width: chartWidth };
           event.currentTarget.setPointerCapture(event.pointerId);
+          client.beginInteraction();
         }} onPointerMove={move} onPointerUp={release} onPointerCancel={release} onLostPointerCapture={release}
         onKeyDown={event => {
           if (!selected) return;
@@ -129,11 +130,14 @@ export function TransferEditor({ client, state, close }: { client: WorkstationCl
           const amount = event.shiftKey ? 0.02 : 0.002;
           if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) {
             event.preventDefault();
+            if (!event.repeat) client.beginInteraction();
             const horizontal = event.key === 'ArrowLeft' ? -amount : event.key === 'ArrowRight' ? amount : 0;
             const vertical = event.key === 'ArrowDown' ? -amount : event.key === 'ArrowUp' ? amount : 0;
             update(selected.position + horizontal, selected.rgba[3] + vertical);
           }
-        }} />)}
+        }} onKeyUp={event => {
+          if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) client.finishInteraction();
+        }} onBlur={() => client.finishInteraction()} />)}
     </div>
     <div className="curve-gradient" role="img" aria-label="Current transfer colors"
       style={points.length ? { background: `linear-gradient(to right, ${gradient})` } : undefined} />

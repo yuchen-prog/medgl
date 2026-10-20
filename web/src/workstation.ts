@@ -26,6 +26,8 @@ export interface WorkstationState {
   customPresets: SavedPreset[];
   customPresetId: string | null;
   storageError: string | null;
+  canUndo: boolean;
+  canRedo: boolean;
   width: number;
   height: number;
 }
@@ -34,8 +36,20 @@ const initialState: WorkstationState = {
   phase: 'idle', connection: 'offline', series: [], selectedId: 'phantom', activeSeries: null,
   session: null, camera: null, style: null, cropBox: null, clipPlane: null, frame: null, rendering: false,
   error: null, catalogError: null, loadWarning: null, width: 1, height: 1, presets: [], presetError: null,
-  customPresets: [], customPresetId: null, storageError: null
+  customPresets: [], customPresetId: null, storageError: null, canUndo: false, canRedo: false
 };
+
+type SceneSnapshot = Pick<WorkstationState, 'camera' | 'style' | 'cropBox' | 'clipPlane' | 'customPresetId'>;
+
+function sameScene(left: SceneSnapshot, right: SceneSnapshot): boolean {
+  const values = (scene: SceneSnapshot) => [scene.camera?.targetMm, scene.camera?.rotationXyzw,
+    scene.camera?.orthoHeightMm, scene.style?.presetId, scene.style?.windowWidth, scene.style?.windowLevel,
+    scene.style?.opacityScale, scene.style?.backgroundRgb, scene.style?.lighting ?? true,
+    scene.style?.transferFunction?.map(point => [point.position, point.rgba]), scene.cropBox?.enabled,
+    scene.cropBox?.minimum, scene.cropBox?.maximum, scene.clipPlane?.enabled, scene.clipPlane?.normal,
+    scene.clipPlane?.offsetMm, scene.clipPlane?.keepPositive, scene.customPresetId];
+  return JSON.stringify(values(left)) === JSON.stringify(values(right));
+}
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : 'Unexpected service error';
 
@@ -68,6 +82,10 @@ export class WorkstationClient {
   private reconnectAttempts = 0;
   private frameFailures = 0;
   private requestTimes = new Map<number, number>();
+  private past: SceneSnapshot[] = [];
+  private future: SceneSnapshot[] = [];
+  private interaction: { before: SceneSnapshot; debounced: boolean } | null = null;
+  private historyTimer: ReturnType<typeof setTimeout> | undefined;
   lastLatencyMs: number | null = null;
 
   constructor(private readonly sequence: { current: number }) {}
@@ -86,6 +104,86 @@ export class WorkstationClient {
   private patch(values: Partial<WorkstationState>): void {
     this.state = { ...this.state, ...values };
     if (this.live) this.listeners.forEach(listener => listener());
+  }
+
+  private sceneSnapshot(): SceneSnapshot {
+    const { camera, style, cropBox, clipPlane, customPresetId } = this.state;
+    return structuredClone({ camera, style, cropBox, clipPlane, customPresetId });
+  }
+
+  private historyStatus(): Pick<WorkstationState, 'canUndo' | 'canRedo'> {
+    const pending = this.interaction && !sameScene(this.interaction.before, this.state);
+    return { canUndo: this.past.length > 0 || !!pending, canRedo: this.future.length > 0 && !pending };
+  }
+
+  private commitInteraction(): void {
+    clearTimeout(this.historyTimer);
+    this.historyTimer = undefined;
+    const interaction = this.interaction;
+    this.interaction = null;
+    if (interaction && !sameScene(interaction.before, this.state)) {
+      this.past.push(interaction.before);
+      if (this.past.length > 50) this.past.shift();
+      this.future = [];
+    }
+    this.patch(this.historyStatus());
+  }
+
+  beginInteraction(debounced = false): void {
+    if (this.state.phase !== 'ready') return;
+    if (this.interaction?.debounced && debounced) return;
+    this.commitInteraction();
+    this.interaction = { before: this.sceneSnapshot(), debounced };
+  }
+
+  isInteracting(includeDebounced = false): boolean {
+    return this.interaction !== null && (includeDebounced || !this.interaction.debounced);
+  }
+
+  private updateScene(values: Partial<SceneSnapshot>): void {
+    if (this.state.phase !== 'ready') return;
+    if (this.interaction?.debounced && !('camera' in values)) this.commitInteraction();
+    const before = this.sceneSnapshot();
+    const next = structuredClone({ ...before, ...values });
+    if (this.interaction?.debounced) {
+      clearTimeout(this.historyTimer);
+      this.historyTimer = setTimeout(() => this.commitInteraction(), 200);
+    }
+    if (sameScene(before, next)) { this.scheduleRender(); return; }
+    if (!this.interaction) {
+      this.past.push(before);
+      if (this.past.length > 50) this.past.shift();
+      this.future = [];
+    }
+    this.patch(structuredClone(values));
+    this.patch(this.historyStatus());
+    this.scheduleRender();
+  }
+
+  private restoreHistory(direction: 'undo' | 'redo'): void {
+    if (this.state.phase !== 'ready') return;
+    this.commitInteraction();
+    const source = direction === 'undo' ? this.past : this.future;
+    const destination = direction === 'undo' ? this.future : this.past;
+    const snapshot = source.pop();
+    if (!snapshot) return;
+    destination.push(this.sceneSnapshot());
+    const restored = structuredClone(snapshot);
+    if (!this.state.customPresets.some(preset => preset.id === restored.customPresetId)) restored.customPresetId = null;
+    this.patch({ ...restored, ...this.historyStatus() });
+    this.scheduleRender();
+  }
+
+  undo(): void { this.restoreHistory('undo'); }
+  redo(): void { this.restoreHistory('redo'); }
+
+  private clearHistory(): void {
+    clearTimeout(this.historyTimer);
+    this.historyTimer = undefined;
+    this.interaction = null;
+    this.past = [];
+    this.future = [];
+    this.patch(this.historyStatus());
   }
 
   async start(): Promise<void> {
@@ -108,15 +206,15 @@ export class WorkstationClient {
 
   applyPreset(presetId: string): void {
     if (!this.state.style || this.state.phase !== 'ready') return;
+    this.commitInteraction();
     const preset = this.state.presets.find(item => item.id === presetId);
     if (preset) {
-      this.setStyle(applyAppearancePreset(this.state.style, preset));
-      this.patch({ customPresetId: null });
+      this.updateScene({ style: applyAppearancePreset(this.state.style, preset), customPresetId: null });
     } else {
       const saved = this.state.customPresets.find(item => item.id === presetId);
       if (saved && this.state.session?.transferFunctionSupported && this.state.presets.some(item => item.id === saved.style.presetId)) {
-        this.setStyle({ ...structuredClone(saved.style), backgroundRgb: [...this.state.style.backgroundRgb] });
-        this.patch({ customPresetId: saved.id });
+        this.updateScene({ style: { ...structuredClone(saved.style), backgroundRgb: [...this.state.style.backgroundRgb] },
+          customPresetId: saved.id });
       }
     }
   }
@@ -141,6 +239,7 @@ export class WorkstationClient {
   }
 
   saveCustomPreset(name: string): void {
+    this.commitInteraction();
     const style = this.state.style;
     if (this.state.phase !== 'ready' || !this.state.session?.transferFunctionSupported || !style?.transferFunction) return;
     if (!name.trim() || name.trim().length > 64 || this.state.customPresets.length >= 32) {
@@ -153,6 +252,7 @@ export class WorkstationClient {
   }
 
   deleteCustomPreset(): void {
+    this.commitInteraction();
     const id = this.state.customPresetId;
     if (!id) return;
     if (this.storeCustomPresets(this.state.customPresets.filter(preset => preset.id !== id)))
@@ -165,6 +265,7 @@ export class WorkstationClient {
   }
 
   resetTransferFunction(): void {
+    this.commitInteraction();
     const preset = this.state.presets.find(item => item.id === this.state.style?.presetId);
     if (preset?.transferFunction) this.setTransferFunction(preset.transferFunction);
   }
@@ -201,6 +302,7 @@ export class WorkstationClient {
 
   private queueSeriesLoad(series: Series, fallback?: Series): Promise<void> {
     const generation = ++this.generation;
+    this.clearHistory();
     this.disconnect();
     this.patch({ phase: this.ownedSessionId ? 'closing' : 'loading', selectedId: series.id,
       loadWarning: null, error: null, rendering: false });
@@ -271,6 +373,7 @@ export class WorkstationClient {
   }
 
   private disconnect(): void {
+    this.commitInteraction();
     this.cancelRenders();
     clearTimeout(this.reconnectTimer);
     clearTimeout(this.connectTimer);
@@ -372,43 +475,42 @@ export class WorkstationClient {
   }
 
   setCamera(camera: Camera): void {
-    if (this.state.phase !== 'ready') return;
-    this.patch({ camera });
-    this.scheduleRender();
+    this.updateScene({ camera });
   }
 
   setStyle(style: RenderStyle): void {
     if (this.state.phase !== 'ready') return;
-    this.patch({ style: structuredClone(parseStyle(style)) });
-    this.scheduleRender();
+    this.updateScene({ style: parseStyle(style) });
   }
 
   setCropBox(cropBox: CropBox): void {
     if (this.state.phase !== 'ready' || !this.state.session?.cropBoxSupported) return;
-    this.patch({ cropBox: parseCropBox(cropBox) });
-    this.scheduleRender();
+    this.updateScene({ cropBox: parseCropBox(cropBox) });
   }
 
   resetCropBox(): void {
+    this.commitInteraction();
     this.setCropBox(fullCropBox());
   }
 
   setClipPlane(clipPlane: ClipPlane): void {
     if (this.state.phase !== 'ready' || !this.state.session?.clipPlaneSupported) return;
-    this.patch({ clipPlane: parseClipPlane(clipPlane) });
-    this.scheduleRender();
+    this.updateScene({ clipPlane: parseClipPlane(clipPlane) });
   }
 
   resetClipPlane(): void {
+    this.commitInteraction();
     this.setClipPlane(defaultClipPlane());
   }
 
   resetCamera(): void {
+    this.commitInteraction();
     const camera = this.state.session && defaultCamera(this.state.session);
     if (camera) this.setCamera(camera);
   }
 
   setStandardView(viewId: string): void {
+    this.commitInteraction();
     const initial = this.state.session?.initial;
     const view = this.state.session?.standardViews?.find(item => item.id === viewId);
     if (initial && view && this.state.phase === 'ready') {
@@ -417,6 +519,11 @@ export class WorkstationClient {
   }
 
   finishInteraction(): void {
+    this.commitInteraction();
+    this.scheduleFinalRender();
+  }
+
+  private scheduleFinalRender(): void {
     if (this.state.phase !== 'ready' || this.state.connection !== 'online') return;
     clearTimeout(this.finalTimer);
     this.finalTimer = setTimeout(() => {
@@ -434,7 +541,7 @@ export class WorkstationClient {
         this.sendRender('preview');
       }, Math.max(0, 34 - (performance.now() - this.lastSentAt)));
     }
-    this.finishInteraction();
+    this.scheduleFinalRender();
   }
 
   private sendRender(quality: Quality): void {

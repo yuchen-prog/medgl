@@ -213,6 +213,7 @@ button { color: inherit; }
 .standard-viewbar .tooltip-anchor:first-child .tooltip { left: 0; transform: none; }
 .standard-viewbar .tooltip-anchor:last-child .tooltip { left: auto; right: 0; transform: none; }
 .toolbar-group { display: flex; gap: 3px; flex-shrink: 0; }
+.history-controls { border-left: 1px solid var(--border); padding-left: 8px; margin-left: 3px; }
 .toolbar-divider { height: 20px; width: 1px; background: var(--border); margin: 0 3px; flex-shrink: 0; }
 .toolbar-spacer { flex: 1; }
 .icon-button { display: inline-flex; justify-content: center; align-items: center; height: 32px; width: 32px; padding: 0; background: transparent; border: 1px solid transparent; border-radius: 4px; color: var(--text-secondary); flex-shrink: 0; }
@@ -292,8 +293,15 @@ button { color: inherit; }
   .header-status { font-size: 11px; }
   .header-actions { gap: 8px; }
   .viewer { padding: 10px 10px 0; }
-  .error-banner { top: 58px; left: 10px; right: 10px; }
-  .viewer-toolbar { padding: 0 6px; gap: 5px; height: 48px; flex-basis: 48px; }
+  .error-banner { top: 90px; left: 10px; right: 10px; }
+  .viewer-toolbar { display: grid; grid-template-columns: 30px 61px minmax(0, 1fr) 30px; grid-template-rows: 32px 32px; padding: 5px 6px; gap: 4px; height: 80px; flex-basis: 80px; }
+  .viewer-toolbar .mobile-settings { grid-column: 1; grid-row: 1; }
+  .viewer-toolbar [aria-label="Camera interaction"] { grid-column: 2; grid-row: 1; }
+  .viewer-toolbar [aria-label="Camera controls"] { grid-column: 3; grid-row: 1; }
+  .viewer-toolbar > .tooltip-anchor:last-child { grid-column: 4; grid-row: 1; }
+  .viewer-toolbar .history-controls { grid-column: 1 / span 2; grid-row: 2; border: 0; padding: 0; margin: 0; }
+  .viewer-toolbar .resolution-control { grid-column: 3 / span 2; grid-row: 2; justify-self: end; }
+  .viewer-toolbar > .toolbar-divider, .viewer-toolbar > .toolbar-spacer { display: none; }
   .toolbar-divider { margin: 0 2px; }
   .icon-button { width: 30px; height: 30px; }
   .toolbar-group { gap: 1px; }
@@ -313,7 +321,7 @@ button { color: inherit; }
 }
 @media (max-width: 380px) {
   .viewer { padding: 6px 6px 0; }
-  .error-banner { top: 54px; left: 6px; right: 6px; }
+  .error-banner { top: 86px; left: 6px; right: 6px; }
   .viewer-toolbar { gap: 2px; padding: 0 4px; }
   .icon-button { width: 27px; height: 29px; }
   .compact { width: 64px; }

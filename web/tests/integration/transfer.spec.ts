@@ -71,6 +71,14 @@ test('editable preset curves change GPU output, restore exactly, save locally an
   });
   expect((await frame()).transferFunction).not.toEqual(initialCurve);
   expect(await pixels(page)).not.toEqual(original);
+  const draggedCurve = (await frame()).transferFunction;
+  const draggedPixels = await pixels(page);
+  await changed(page, () => page.getByRole('button', { name: 'Undo', exact: true }).click());
+  expect((await frame()).transferFunction).toEqual(initialCurve);
+  expect(await pixels(page)).toEqual(original);
+  await changed(page, () => page.getByRole('button', { name: 'Redo', exact: true }).click());
+  expect((await frame()).transferFunction).toEqual(draggedCurve);
+  expect(await pixels(page)).toEqual(draggedPixels);
   await changed(page, () => page.getByRole('spinbutton', { name: 'Point opacity', exact: true }).fill('10'));
   await changed(page, () => page.getByLabel('Point color', { exact: true }).fill('#00ff00'));
   const colored = (await frame()).transferFunction![2]!.rgba;
@@ -127,6 +135,11 @@ test('editable preset curves change GPU output, restore exactly, save locally an
         await touch.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
       });
       expect((await frame()).transferFunction).not.toEqual(before);
+      const after = (await frame()).transferFunction;
+      await changed(page, () => page.getByRole('button', { name: 'Undo', exact: true }).click());
+      expect((await frame()).transferFunction).toEqual(before);
+      await changed(page, () => page.getByRole('button', { name: 'Redo', exact: true }).click());
+      expect((await frame()).transferFunction).toEqual(after);
       expect(await page.getByTestId('transfer-editor').evaluate(editor => {
         const boundary = editor.getBoundingClientRect();
         return [...editor.querySelectorAll('input, button, select')].every(element => {

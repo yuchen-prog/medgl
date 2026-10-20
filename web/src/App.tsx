@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { PointerEvent as ReactPointerEvent, ReactNode } from 'react';
-import { Activity, AlertCircle, Check, ChevronDown, Download, Hand, LoaderCircle, Maximize,
+import { Activity, AlertCircle, Check, ChevronDown, Download, Hand, LoaderCircle, Maximize, Undo2, Redo2,
   ChartSpline, Crop, Info, Moon, Sun, SlidersHorizontal, FlipHorizontal2, PanelLeftClose, PanelLeftOpen, Play, RefreshCw, Rotate3D, RotateCcw, Scan, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { clamp, matchedStandardView, orbitCamera, orientationLabels, panCamera, zoomCamera } from './camera';
 import { planeAngles, planeNormal, planeRadius } from './clip-plane';
@@ -353,6 +353,7 @@ function Viewport({ client, state, mode, resolution }: {
       if (!current.camera || current.phase !== 'ready' || current.connection !== 'online') return;
       event.preventDefault();
       const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? host.clientHeight : 1);
+      client.beginInteraction(true);
       client.setCamera(zoomCamera(current.camera, delta));
     };
     host.addEventListener('wheel', wheel, { passive: false });
@@ -387,6 +388,7 @@ function Viewport({ client, state, mode, resolution }: {
       event.currentTarget.focus();
       event.currentTarget.setPointerCapture(event.pointerId);
       drag.current = { id: event.pointerId, x: event.clientX, y: event.clientY, pan: event.button === 2 || mode === 'pan' };
+      client.beginInteraction();
     }} onPointerMove={event => {
       const previous = drag.current;
       const camera = client.getSnapshot().camera;
@@ -491,6 +493,22 @@ export function App() {
   }, [client]);
 
   useEffect(() => {
+    const keyboard = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.isComposing || event.altKey || !(event.ctrlKey || event.metaKey) ||
+          (event.target instanceof Element && event.target.closest('input:not([type="range"]), textarea, select, [contenteditable]:not([contenteditable="false"]), [role="textbox"]'))) return;
+      const key = event.key.toLowerCase();
+      if (key !== 'z' && !(key === 'y' && !event.shiftKey)) return;
+      const current = client.getSnapshot();
+      if (current.phase !== 'ready' || current.connection !== 'online') return;
+      event.preventDefault();
+      if (client.isInteracting()) return;
+      if (key === 'y' || event.shiftKey) client.redo(); else client.undo();
+    };
+    window.addEventListener('keydown', keyboard);
+    return () => window.removeEventListener('keydown', keyboard);
+  }, [client]);
+
+  useEffect(() => {
     if (!drawerOpen) return;
     const button = document.querySelector<HTMLButtonElement>('#settings-panel [aria-label="Close settings"]');
     button?.focus();
@@ -515,7 +533,11 @@ export function App() {
     state.connection === 'online' ? 'Connected' : state.connection === 'connecting' ? 'Connecting' : state.connection === 'reconnecting' ? 'Reconnecting' : 'Idle';
   const zoom = (delta: number) => {
     const camera = client.getSnapshot().camera;
-    if (camera) client.setCamera(zoomCamera(camera, delta));
+    if (camera) {
+      client.beginInteraction();
+      client.setCamera(zoomCamera(camera, delta));
+      client.finishInteraction();
+    }
   };
   const download = async () => {
     setExporting(true);
@@ -553,7 +575,22 @@ export function App() {
     setThemeSaved(saveTheme(next));
   };
 
-  return <div className="workstation">
+  return <div className="workstation"
+    onFocusCapture={event => {
+      if ((event.target as Element).matches('input[type=number], input[type=color]')) client.beginInteraction();
+    }} onBlur={event => {
+      if ((event.target as Element).matches('input[type=number], input[type=color], input[type=range]')) client.finishInteraction();
+    }} onPointerDownCapture={event => {
+      if ((event.target as Element).matches('input[type=range]')) client.beginInteraction();
+    }} onPointerUpCapture={event => {
+      if ((event.target as Element).matches('input[type=range]')) client.finishInteraction();
+    }} onPointerCancelCapture={event => {
+      if ((event.target as Element).matches('input[type=range]')) client.finishInteraction();
+    }} onKeyDownCapture={event => {
+      if (!event.repeat && (event.target as Element).matches('input[type=range]') &&
+          ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key))
+        client.beginInteraction();
+    }}>
     <header className="app-header">
       <div className="brand"><span className="brand-mark"><Scan size={21} strokeWidth={1.8} /></span>
         <strong>MEDGL<span className="brand-dot">.</span></strong><span className="brand-divider" />
@@ -586,6 +623,12 @@ export function App() {
             <IconButton label="Reset camera" disabled={!ready} onClick={() => client.resetCamera()}><RotateCcw size={17} /></IconButton>
             <IconButton label="Zoom out" disabled={!ready} onClick={() => zoom(120)}><ZoomOut size={18} /></IconButton>
             <IconButton label="Zoom in" disabled={!ready} onClick={() => zoom(-120)}><ZoomIn size={18} /></IconButton>
+          </div>
+          <div className="toolbar-group history-controls" role="group" aria-label="Edit history">
+            <IconButton label="Undo" aria-keyshortcuts="Control+z Meta+z" disabled={!ready || !state.canUndo}
+              onClick={() => client.undo()}><Undo2 size={17} /></IconButton>
+            <IconButton label="Redo" aria-keyshortcuts="Control+Shift+z Meta+Shift+z Control+y" disabled={!ready || !state.canRedo}
+              onClick={() => client.redo()}><Redo2 size={17} /></IconButton>
           </div>
           <div className="toolbar-spacer" />
           <div className="resolution-control"><label htmlFor="resolution">Render size</label>

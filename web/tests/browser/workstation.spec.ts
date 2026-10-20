@@ -128,6 +128,162 @@ async function expectReady(page: Page) {
   await expect(page.getByRole('button', { name: 'Download final PNG' })).toBeEnabled();
 }
 
+test('window width and level support history buttons and shortcuts while sliders retain focus', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  const service = await mockService(page);
+  await page.goto('/');
+  await expectReady(page);
+  const undo = page.getByRole('button', { name: 'Undo', exact: true });
+  const redo = page.getByRole('button', { name: 'Redo', exact: true });
+  for (const field of [
+    { label: 'Window width', key: 'windowWidth' as const, initial: 1800, edited: 2400 },
+    { label: 'Window level', key: 'windowLevel' as const, initial: 400, edited: 550 }
+  ]) {
+    const number = page.getByRole('spinbutton', { name: field.label, exact: true });
+    const slider = page.getByRole('slider', { name: `${field.label} slider`, exact: true });
+    await number.fill(String(field.edited));
+    await number.press('Enter');
+    await expectReady(page);
+    expect(service.renders.at(-1)!.style[field.key]).toBe(field.edited);
+    await undo.click();
+    await expect(number).toHaveValue(String(field.initial));
+    await expectReady(page);
+    await redo.click();
+    await expect(number).toHaveValue(String(field.edited));
+    await expectReady(page);
+    await undo.click();
+    await expectReady(page);
+    const bounds = (await slider.boundingBox())!;
+    await page.mouse.move(bounds.x + bounds.width * 0.35, bounds.y + bounds.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x + bounds.width * 0.65, bounds.y + bounds.height / 2, { steps: 10 });
+    await page.mouse.up();
+    await expectReady(page);
+    const dragged = await number.inputValue();
+    expect(Number(dragged)).not.toBe(field.initial);
+    await expect(slider).toBeFocused();
+    await slider.press('Control+z');
+    await expect(number).toHaveValue(String(field.initial));
+    await expectReady(page);
+    expect(service.renders.at(-1)!.style[field.key]).toBe(field.initial);
+    await expect(slider).toBeFocused();
+    await slider.press('Control+Shift+z');
+    await expect(number).toHaveValue(dragged);
+    await expectReady(page);
+    expect(service.renders.at(-1)!.style[field.key]).toBe(Number(dragged));
+    await slider.press('Control+z');
+    await expect(number).toHaveValue(String(field.initial));
+    await expectReady(page);
+  }
+});
+
+test('history groups gestures, protects text undo, supports shortcuts and clears on a new series', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  const service = await mockService(page);
+  await page.goto('/');
+  await expectReady(page);
+  const undo = page.getByRole('button', { name: 'Undo', exact: true });
+  const redo = page.getByRole('button', { name: 'Redo', exact: true });
+  const viewport = page.getByTestId('viewport');
+  await expect(undo).toBeDisabled();
+  await expect(redo).toBeDisabled();
+  const initialCamera = structuredClone(service.renders.at(-1)!.camera);
+  const bounds = (await viewport.boundingBox())!;
+  await page.mouse.move(bounds.x + bounds.width * 0.4, bounds.y + bounds.height * 0.4);
+  await page.mouse.down();
+  await page.mouse.move(bounds.x + bounds.width * 0.55, bounds.y + bounds.height * 0.5, { steps: 10 });
+  await expectReady(page);
+  await page.keyboard.press('Control+z');
+  await page.mouse.move(bounds.x + bounds.width * 0.6, bounds.y + bounds.height * 0.55, { steps: 5 });
+  await page.mouse.up();
+  await expectReady(page);
+  const rotated = structuredClone(service.renders.at(-1)!.camera);
+  expect(rotated).not.toEqual(initialCamera);
+  await undo.click();
+  await expectReady(page);
+  expect(service.renders.at(-1)!.camera).toEqual(initialCamera);
+  await expect(undo).toBeDisabled();
+  await viewport.focus();
+  await page.keyboard.press('Control+Shift+z');
+  await expectReady(page);
+  expect(service.renders.at(-1)!.camera).toEqual(rotated);
+  await viewport.focus();
+  await page.keyboard.press('Control+z');
+  await expectReady(page);
+  await page.getByRole('button', { name: 'Posterior view', exact: true }).click();
+  await expectReady(page);
+  await expect(redo).toBeDisabled();
+  const level = page.getByRole('spinbutton', { name: 'Window level', exact: true });
+  await level.fill('450');
+  await level.fill('500');
+  await level.press('Control+z');
+  await expect(page.getByRole('button', { name: 'Posterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await level.fill('550');
+  await level.press('Enter');
+  await expectReady(page);
+  await undo.click();
+  await expectReady(page);
+  await expect(level).toHaveValue('400');
+  await expect(page.getByRole('button', { name: 'Posterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await undo.click();
+  await expectReady(page);
+  expect(service.renders.at(-1)!.camera).toEqual(initialCamera);
+  await expect(undo).toBeDisabled();
+  const slider = page.getByRole('slider', { name: 'Window width slider', exact: true });
+  const sliderBounds = (await slider.boundingBox())!;
+  await page.mouse.move(sliderBounds.x + sliderBounds.width * 0.3, sliderBounds.y + sliderBounds.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(sliderBounds.x + sliderBounds.width * 0.6, sliderBounds.y + sliderBounds.height / 2, { steps: 12 });
+  await page.mouse.up();
+  await expectReady(page);
+  await undo.click();
+  await expectReady(page);
+  await expect(page.getByRole('spinbutton', { name: 'Window width', exact: true })).toHaveValue('1800');
+  await expect(undo).toBeDisabled();
+  await slider.focus();
+  for (let repeat = 0; repeat < 4; repeat++) await page.keyboard.down('ArrowRight');
+  await page.keyboard.up('ArrowRight');
+  await expectReady(page);
+  await undo.click();
+  await expectReady(page);
+  await expect(page.getByRole('spinbutton', { name: 'Window width', exact: true })).toHaveValue('1800');
+  await expect(undo).toBeDisabled();
+  await page.mouse.move(bounds.x + bounds.width * 0.4, bounds.y + bounds.height * 0.4);
+  for (let repeat = 0; repeat < 3; repeat++) await page.mouse.wheel(0, -30);
+  await expectReady(page);
+  expect(service.renders.at(-1)!.camera.orthoHeightMm).toBeLessThan(initialCamera.orthoHeightMm);
+  await undo.click();
+  await expectReady(page);
+  expect(service.renders.at(-1)!.camera).toEqual(initialCamera);
+  await expect(undo).toBeDisabled();
+  await page.getByRole('switch', { name: 'Dark theme', exact: true }).check();
+  await expect(undo).toBeDisabled();
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expectReady(page);
+    expect(await page.locator('.viewer-toolbar').evaluate(toolbar => {
+      const boundary = toolbar.getBoundingClientRect();
+      const controls = [...toolbar.querySelectorAll('button, select')].map(element => element.getBoundingClientRect());
+      return controls.every((rect, index) => rect.left >= boundary.left && rect.right <= boundary.right &&
+        rect.top >= boundary.top && rect.bottom <= boundary.bottom && controls.slice(index + 1).every(other =>
+          rect.right <= other.left || rect.left >= other.right || rect.bottom <= other.top || rect.top >= other.bottom));
+    })).toBe(true);
+    await page.getByRole('button', { name: 'Left view', exact: true }).click();
+    await expectReady(page);
+    await undo.click();
+    await expectReady(page);
+    await expect(undo).toBeDisabled();
+    await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.screenshot({ path: `test-results/history-mobile-${width}.png`, animations: 'disabled' });
+  }
+  await page.getByRole('button', { name: 'Open settings', exact: true }).click();
+  await page.getByLabel('Series', { exact: true }).selectOption('phantom');
+  await page.getByRole('button', { name: 'Load series', exact: true }).click();
+  await expectReady(page);
+  await expect(undo).toBeDisabled();
+  await expect(redo).toBeDisabled();
+});
+
 test('abbreviated standard views stay inside the image without triggering camera gestures', async ({ page }) => {
   const service = await mockService(page);
   await page.goto('/');

@@ -114,6 +114,7 @@ class GlassScene {
     this.activeControl = control;
     this.lastPointerWasPlane = true;
     this.planePointer = event.pointerId;
+    this.client.beginInteraction();
     this.renderer.domElement.setPointerCapture(event.pointerId);
     this.host.dataset.dragging = 'true';
     this.host.dataset.dragAction = control.mode;

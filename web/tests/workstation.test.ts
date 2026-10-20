@@ -68,6 +68,141 @@ afterEach(async () => {
 });
 
 describe('session ownership and render scheduling', () => {
+  it('records one long gesture, redoes it, and clears redo only on a real new edit', async () => {
+    const instance = client();
+    await instance.start(); await flush();
+    const socket = FakeSocket.instances[0]!;
+    socket.open();
+    const initialCamera = structuredClone(instance.getSnapshot().camera!);
+    instance.beginInteraction();
+    instance.setCamera({ ...initialCamera, orthoHeightMm: 250 });
+    await vi.advanceTimersByTimeAsync(500);
+    instance.setCamera({ ...initialCamera, orthoHeightMm: 300 });
+    instance.finishInteraction();
+    expect(instance.getSnapshot().canUndo).toBe(true);
+    instance.undo();
+    expect(instance.getSnapshot().camera).toEqual(initialCamera);
+    expect(instance.getSnapshot().canUndo).toBe(false);
+    expect(instance.getSnapshot().canRedo).toBe(true);
+    instance.setCamera(structuredClone(initialCamera));
+    expect(instance.getSnapshot().canRedo).toBe(true);
+    instance.redo();
+    expect(instance.getSnapshot().camera!.orthoHeightMm).toBe(300);
+    await vi.advanceTimersByTimeAsync(200);
+    expect((JSON.parse(socket.send.mock.calls.at(-1)![0] as string) as RenderRequest).camera.orthoHeightMm).toBe(300);
+    instance.undo();
+    instance.beginInteraction();
+    instance.setStyle({ ...instance.getSnapshot().style!, windowLevel: 500 });
+    instance.redo();
+    expect(instance.getSnapshot().style!.windowLevel).toBe(500);
+    expect(instance.getSnapshot().canRedo).toBe(false);
+  });
+  it('ignores no-op gestures and groups wheel bursts with an idle boundary', async () => {
+    const instance = client();
+    await instance.start(); await flush();
+    const camera = structuredClone(instance.getSnapshot().camera!);
+    instance.beginInteraction();
+    instance.setCamera({ ...camera, orthoHeightMm: 300 });
+    instance.setCamera(camera);
+    instance.finishInteraction();
+    expect(instance.getSnapshot().canUndo).toBe(false);
+    for (const orthoHeightMm of [240, 280, 320]) {
+      instance.beginInteraction(true);
+      instance.setCamera({ ...camera, orthoHeightMm });
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    await vi.advanceTimersByTimeAsync(200);
+    instance.undo();
+    expect(instance.getSnapshot().camera).toEqual(camera);
+    expect(instance.getSnapshot().canUndo).toBe(false);
+  });
+  it('limits history to fifty edits and clears it for a new series, not resize or reconnect', async () => {
+    const instance = client();
+    await instance.start(); await flush();
+    const camera = instance.getSnapshot().camera!;
+    for (let step = 1; step <= 55; step++) instance.setCamera({ ...camera, orthoHeightMm: 200 + step });
+    instance.resize(800, 600);
+    instance.reconnect();
+    for (let step = 0; step < 50; step++) instance.undo();
+    expect(instance.getSnapshot().camera!.orthoHeightMm).toBe(205);
+    expect(instance.getSnapshot().canUndo).toBe(false);
+    expect(instance.getSnapshot().canRedo).toBe(true);
+    await instance.loadSeries('phantom');
+    expect(instance.getSnapshot()).toMatchObject({ canUndo: false, canRedo: false });
+  });
+  it('separates wheel zoom from subsequent commands and expires no-op wheel gestures', async () => {
+    const instance = client();
+    await instance.start(); await flush();
+    const camera = structuredClone(instance.getSnapshot().camera!);
+    instance.beginInteraction(true);
+    instance.setCamera(camera);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(instance.isInteracting(true)).toBe(false);
+    expect(instance.getSnapshot().canUndo).toBe(false);
+    instance.beginInteraction(true);
+    instance.setCamera({ ...camera, orthoHeightMm: 250 });
+    instance.beginInteraction();
+    instance.setCamera({ ...camera, orthoHeightMm: 300 });
+    instance.finishInteraction();
+    instance.undo();
+    expect(instance.getSnapshot().camera!.orthoHeightMm).toBe(250);
+    instance.undo();
+    expect(instance.getSnapshot().camera).toEqual(camera);
+    instance.beginInteraction(true);
+    instance.setCamera({ ...camera, orthoHeightMm: 250 });
+    instance.setStyle({ ...instance.getSnapshot().style!, windowLevel: 500 });
+    instance.undo();
+    expect(instance.getSnapshot().camera!.orthoHeightMm).toBe(250);
+    instance.undo();
+    expect(instance.getSnapshot().camera).toEqual(camera);
+  });
+  it('restores the whole scene across appearance, curve, crop and plane edits without aliasing', async () => {
+    vi.mocked(api.createSession).mockResolvedValue({ ...ready, transferFunctionSupported: true,
+      cropBoxSupported: true, clipPlaneSupported: true });
+    const instance = client();
+    await instance.start(); await flush();
+    const initialScene = structuredClone(instance.getSnapshot());
+    instance.beginInteraction();
+    instance.setTransferFunction([{ position: 0, rgba: [0, 0, 0, 0] }, { position: 1, rgba: [1, 0, 0, 0.4] }]);
+    instance.setCropBox({ enabled: true, minimum: [0.2, 0, 0], maximum: [1, 1, 1] });
+    instance.setClipPlane({ ...defaultClipPlane(), enabled: true, offsetMm: 12 });
+    instance.finishInteraction();
+    const edited = structuredClone(instance.getSnapshot());
+    instance.undo();
+    for (const key of ['camera', 'style', 'cropBox', 'clipPlane'] as const)
+      expect(instance.getSnapshot()[key]).toEqual(initialScene[key]);
+    instance.redo();
+    for (const key of ['camera', 'style', 'cropBox', 'clipPlane'] as const)
+      expect(instance.getSnapshot()[key]).toEqual(edited[key]);
+    instance.applyPreset('ct-heart');
+    instance.undo();
+    expect(instance.getSnapshot().style).toEqual(edited.style);
+  });
+  it('does not undo local preset saves or deletes and never resurrects a deleted preset', async () => {
+    const points = [{ position: 0, rgba: [0, 0, 0, 0] as [number, number, number, number] },
+      { position: 1, rgba: [1, 1, 1, 0.2] as [number, number, number, number] }];
+    const storage = new Map<string, string>();
+    vi.stubGlobal('localStorage', { getItem: (key: string) => storage.get(key) ?? null,
+      setItem: (key: string, value: string) => storage.set(key, value) });
+    vi.mocked(api.createSession).mockResolvedValue({ ...ready, transferFunctionSupported: true,
+      initial: { ...ready.initial!, style: { ...ready.initial!.style, transferFunction: points } } });
+    vi.mocked(api.appearancePresets).mockResolvedValue([heartPreset, { ...heartPreset, id: 'ct-bone' }]);
+    const instance = client();
+    await instance.start(); await flush();
+    instance.saveCustomPreset('Local bone');
+    const saved = instance.getSnapshot().customPresetId;
+    expect(instance.getSnapshot().canUndo).toBe(false);
+    instance.applyPreset('ct-heart');
+    instance.undo();
+    expect(instance.getSnapshot().customPresetId).toBe(saved);
+    instance.deleteCustomPreset();
+    expect(instance.getSnapshot().canUndo).toBe(false);
+    instance.redo();
+    instance.undo();
+    expect(instance.getSnapshot().customPresetId).toBeNull();
+    expect(instance.getSnapshot().customPresets).toEqual([]);
+    expect(JSON.parse(storage.get(PRESET_STORAGE_KEY)!).presets).toEqual([]);
+  });
   it('starts each volume in the anterior view and resets camera to the same default', async () => {
     const instance = client();
     await instance.start(); await flush();

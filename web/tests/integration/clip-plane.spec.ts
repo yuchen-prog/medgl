@@ -110,8 +110,17 @@ test('glass plane rotates, advances, clips on GPU, restores, exports without too
   await changed(page, () => enable.check());
   await page.getByText('Precision settings', { exact: true }).click();
   const beforeDrag = (await displayedFrame()).clipPlane!.normal;
+  const beforeDragPixels = await pixels(page);
   await changed(page, () => dragHandle(page, 'red'));
   expect((await displayedFrame()).clipPlane!.normal).not.toEqual(beforeDrag);
+  const afterDrag = (await displayedFrame()).clipPlane;
+  const afterDragPixels = await pixels(page);
+  await changed(page, () => page.getByRole('button', { name: 'Undo', exact: true }).click());
+  expect((await displayedFrame()).clipPlane!.normal).toEqual(beforeDrag);
+  expect(await pixels(page)).toEqual(beforeDragPixels);
+  await changed(page, () => page.getByRole('button', { name: 'Redo', exact: true }).click());
+  expect((await displayedFrame()).clipPlane).toEqual(afterDrag);
+  expect(await pixels(page)).toEqual(afterDragPixels);
   const camera = (await displayedFrame()).camera;
   await changed(page, () => page.getByRole('spinbutton', { name: 'Tilt (LPS)', exact: true }).fill('55'));
   await changed(page, () => page.getByRole('spinbutton', { name: 'Azimuth (LPS)', exact: true }).fill('25'));
