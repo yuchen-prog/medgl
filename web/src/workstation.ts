@@ -39,6 +39,14 @@ const initialState: WorkstationState = {
 
 const errorText = (error: unknown): string => error instanceof Error ? error.message : 'Unexpected service error';
 
+function defaultCamera(session: Session): Camera | null {
+  if (!session.initial) return null;
+  const camera = structuredClone(session.initial.camera);
+  const anterior = session.standardViews?.find(view => view.id === 'anterior');
+  if (anterior) camera.rotationXyzw = [...anterior.rotationXyzw];
+  return camera;
+}
+
 export class WorkstationClient {
   private state = initialState;
   private listeners = new Set<() => void>();
@@ -223,7 +231,7 @@ export class WorkstationClient {
               return;
             }
             if (!session.initial) throw new Error('Missing initial view');
-            this.patch({ phase: 'ready', session, camera: structuredClone(session.initial.camera),
+            this.patch({ phase: 'ready', session, camera: defaultCamera(session),
               style: structuredClone(session.initial.style),
               cropBox: structuredClone(session.initial.cropBox ?? fullCropBox()),
               clipPlane: structuredClone(session.initial.clipPlane ?? defaultClipPlane()), error: null });
@@ -396,7 +404,8 @@ export class WorkstationClient {
   }
 
   resetCamera(): void {
-    if (this.state.session?.initial) this.setCamera(structuredClone(this.state.session.initial.camera));
+    const camera = this.state.session && defaultCamera(this.state.session);
+    if (camera) this.setCamera(camera);
   }
 
   setStandardView(viewId: string): void {

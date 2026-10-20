@@ -2,7 +2,7 @@ import { expect } from '@playwright/test';
 import { test } from './fixtures';
 import type { Page } from '@playwright/test';
 import { readFile } from 'node:fs/promises';
-import type { AppearancePreset } from '../../src/protocol';
+import type { AppearancePreset, FrameMeta, Session } from '../../src/protocol';
 
 async function ready(page: Page) {
   await expect(page.getByRole('button', { name: 'Download final PNG' })).toBeEnabled({ timeout: 30000 });
@@ -30,6 +30,12 @@ async function pixelSummary(page: Page) {
 test('real DICOM, CUDA frames, interaction, presets, PNG export and responsive canvas', async ({ page }) => {
   const errors: string[] = [];
   const createdSeries: string[] = [];
+  const frames: FrameMeta[] = [];
+  page.on('websocket', socket => socket.on('framereceived', event => {
+    if (typeof event.payload === 'string') return;
+    const size = event.payload.readUInt32LE(0);
+    frames.push(JSON.parse(event.payload.subarray(4, size + 4).toString('utf8')) as FrameMeta);
+  }));
   page.on('request', request => {
     if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/v1/sessions')
       createdSeries.push((request.postDataJSON() as { seriesId: string }).seriesId);
@@ -48,6 +54,17 @@ test('real DICOM, CUDA frames, interaction, presets, PNG export and responsive c
   await page.goto('/');
   await ready(page);
   expect(createdSeries).toEqual(['series-1']);
+  await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('orientation-top')).toHaveText('S');
+  const sessionResponse = await page.request.get(`/api/v1/sessions/${frames[0]!.sessionId}`);
+  expect(sessionResponse.ok()).toBe(true);
+  const session = await sessionResponse.json() as Session;
+  await sessionResponse.dispose();
+  const anterior = session.standardViews!.find(view => view.id === 'anterior')!;
+  expect(frames[0]!.camera!.targetMm).toEqual(session.initial!.camera.targetMm);
+  expect(frames[0]!.camera!.orthoHeightMm).toBe(session.initial!.camera.orthoHeightMm);
+  for (const [index, value] of anterior.rotationXyzw.entries())
+    expect(frames[0]!.camera!.rotationXyzw[index]).toBeCloseTo(value, 6);
   await expect(page.getByRole('combobox', { name: 'Series', exact: true })).toHaveValue('series-1');
   await expect(page.locator('.viewport-series')).toHaveText('CT series');
   expect(await page.evaluate(async () => {
@@ -66,6 +83,7 @@ test('real DICOM, CUDA frames, interaction, presets, PNG export and responsive c
   await expect(page.locator('.geometry')).toContainText('64 × 64 × 64', { timeout: 30000 });
   await page.getByRole('tab', { name: 'Display', exact: true }).click();
   await ready(page);
+  await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const before = await pixelSummary(page);
   const viewbar = page.getByRole('group', { name: 'Standard views', exact: true });
   await expect(viewbar.getByRole('button')).toHaveCount(6);
@@ -92,6 +110,12 @@ test('real DICOM, CUDA frames, interaction, presets, PNG export and responsive c
     expect((await pixelSummary(page)).maximum).toBeGreaterThan(50);
   }
   await page.getByRole('button', { name: 'Reset camera' }).click();
+  await ready(page);
+  await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('orientation-top')).toHaveText('S');
+  const resetSequence = await page.locator('.viewport-bottom-right .mono').innerText();
+  await page.getByRole('button', { name: 'Inferior view', exact: true }).click();
+  await expect(page.locator('.viewport-bottom-right .mono')).not.toHaveText(resetSequence);
   await ready(page);
   const viewport = page.getByTestId('viewport');
   const bounds = (await viewport.boundingBox())!;

@@ -128,6 +128,52 @@ async function expectReady(page: Page) {
   await expect(page.getByRole('button', { name: 'Download final PNG' })).toBeEnabled();
 }
 
+test('abbreviated standard views stay inside the image without triggering camera gestures', async ({ page }) => {
+  const service = await mockService(page);
+  await page.goto('/');
+  await expectReady(page);
+  const viewport = page.getByTestId('viewport');
+  const viewbar = viewport.getByRole('group', { name: 'Standard views', exact: true });
+  for (const width of [1440, 390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await expectReady(page);
+    await expect(viewbar.getByRole('button')).toHaveText(['A', 'P', 'L', 'R', 'S', 'I']);
+    expect(await viewbar.evaluate(group => {
+      const boundary = group.closest('[data-testid="viewport"]')!.getBoundingClientRect();
+      const bar = group.getBoundingClientRect();
+      const labels = [...group.parentElement!.querySelectorAll('.viewport-bottom-left, .viewport-bottom-right, .orientation-bottom')];
+      return bar.left >= boundary.left && bar.right <= boundary.right && bar.top >= boundary.top && bar.bottom <= boundary.bottom &&
+        labels.every(label => {
+          const rect = label.getBoundingClientRect();
+          return bar.right <= rect.left || bar.left >= rect.right || bar.bottom <= rect.top || bar.top >= rect.bottom;
+        });
+    })).toBe(true);
+    for (const view of standardViews) {
+      const button = viewbar.getByRole('button', { name: `${view.name} view`, exact: true });
+      await button.click();
+      await expectReady(page);
+      expect(service.renders.at(-1)?.camera.rotationXyzw).toEqual(view.rotationXyzw);
+      await expect(button).toHaveAttribute('aria-pressed', 'true');
+    }
+    const anterior = viewbar.getByRole('button', { name: 'Anterior view', exact: true });
+    await anterior.dblclick();
+    await expectReady(page);
+    expect(service.renders.at(-1)?.camera.rotationXyzw).toEqual(standardViews[0]!.rotationXyzw);
+    const camera = structuredClone(service.renders.at(-1)!.camera);
+    const button = (await anterior.boundingBox())!;
+    await page.mouse.move(button.x + button.width / 2, button.y + button.height / 2);
+    await page.mouse.wheel(0, -240);
+    await page.mouse.down();
+    await page.mouse.move(button.x + 80, button.y - 70, { steps: 5 });
+    await page.mouse.up();
+    await expectReady(page);
+    expect(service.renders.at(-1)?.camera).toEqual(camera);
+    await anterior.focus();
+    await expect(viewbar.getByRole('tooltip', { name: 'Anterior', exact: true })).toBeVisible();
+    await page.screenshot({ path: `test-results/standard-views-${width}.png`, animations: 'disabled' });
+  }
+});
+
 test('CT autoload, rotate, pan, zoom, styles, reset and final PNG export', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 960 });
   const errors: string[] = [];
@@ -142,6 +188,10 @@ test('CT autoload, rotate, pan, zoom, styles, reset and final PNG export', async
   expect(service.renders[0]!.height).toBeGreaterThan(1);
   const viewbar = page.getByRole('group', { name: 'Standard views', exact: true });
   await expect(viewbar.getByRole('button')).toHaveCount(6);
+  const defaultCamera = { ...initial.camera, rotationXyzw: standardViews[0]!.rotationXyzw };
+  expect(service.renders[0]!.camera).toEqual(defaultCamera);
+  await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('orientation-top')).toHaveText('S');
   await expect(page.getByRole('complementary', { name: 'Volume settings' }).getByRole('button', { name: / view$/ })).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: 'Standard view' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Anterior view', exact: true }).click();
@@ -153,9 +203,13 @@ test('CT autoload, rotate, pan, zoom, styles, reset and final PNG export', async
   await expect(page.getByTestId('orientation-left')).toHaveText('L');
   await expect(page.getByTestId('orientation-right')).toHaveText('R');
   await expect(page.getByTestId('orientation-bottom')).toHaveText('I');
+  await page.getByRole('button', { name: 'Posterior view', exact: true }).click();
+  await expectReady(page);
   await page.getByRole('button', { name: 'Reset camera' }).click();
   await expectReady(page);
-  await expect(page.getByTestId('orientation-top')).toHaveText('P');
+  expect(service.renders.at(-1)?.camera).toEqual(defaultCamera);
+  await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('orientation-top')).toHaveText('S');
   await page.getByText('Lighting and background', { exact: true }).click();
   for (const preset of [
     { id: 'ct-heart', width: 800, level: 200 },
@@ -188,7 +242,7 @@ test('CT autoload, rotate, pan, zoom, styles, reset and final PNG export', async
   await page.mouse.up();
   await expect.poll(() => service.renders.at(-1)?.quality).toBe('final');
   await expectReady(page);
-  expect(service.renders.at(-1)?.camera.rotationXyzw).not.toEqual(initial.camera.rotationXyzw);
+  expect(service.renders.at(-1)?.camera.rotationXyzw).not.toEqual(defaultCamera.rotationXyzw);
   await expect(viewbar.locator('button[aria-pressed=true]')).toHaveCount(0);
   await page.mouse.down({ button: 'right' });
   await page.mouse.move(startX + 140, startY + 65, { steps: 4 });
@@ -208,7 +262,8 @@ test('CT autoload, rotate, pan, zoom, styles, reset and final PNG export', async
   await page.getByRole('button', { name: 'Charcoal background' }).click();
   await viewport.dblclick({ position: { x: bounds.width * .5, y: bounds.height * .5 } });
   await expectReady(page);
-  expect(service.renders.at(-1)?.camera).toEqual(initial.camera);
+  expect(service.renders.at(-1)?.camera).toEqual(defaultCamera);
+  await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
   const downloadEvent = page.waitForEvent('download');
   await page.getByRole('button', { name: 'Download final PNG' }).click();
   const download = await downloadEvent;

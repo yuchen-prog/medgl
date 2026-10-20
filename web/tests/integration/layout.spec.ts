@@ -15,6 +15,22 @@ async function changed(page: Page, action: () => Promise<unknown>) {
   await finalFrame(page);
 }
 
+async function expectViewShortcuts(page: Page) {
+  const shortcuts = page.getByTestId('viewport').getByRole('group', { name: 'Standard views', exact: true });
+  await expect(shortcuts.getByRole('button')).toHaveText(['A', 'P', 'L', 'R', 'S', 'I']);
+  expect(await shortcuts.evaluate(group => {
+    const viewport = group.parentElement!;
+    const boundary = viewport.getBoundingClientRect();
+    const bar = group.getBoundingClientRect();
+    const labels = [...viewport.querySelectorAll('.viewport-top-left, .viewport-top-right, .viewport-bottom-left, .viewport-bottom-right, .orientation-overlay > span')];
+    return bar.left >= boundary.left && bar.right <= boundary.right && bar.top >= boundary.top && bar.bottom <= boundary.bottom &&
+      labels.every(label => {
+        const rect = label.getBoundingClientRect();
+        return bar.right <= rect.left || bar.left >= rect.right || bar.bottom <= rect.top || bar.top >= rect.bottom;
+      });
+  })).toBe(true);
+}
+
 test('icon tabs and curve dock preserve scene state and keep the viewport usable on desktop and mobile', async ({ page }) => {
   const frames = new Map<number, FrameMeta>();
   const errors: string[] = [];
@@ -38,6 +54,7 @@ test('icon tabs and curve dock preserve scene state and keep the viewport usable
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/');
   await finalFrame(page);
+  await expectViewShortcuts(page);
   await changed(page, () => page.getByRole('combobox', { name: 'Render size' }).selectOption('50%'));
   const tabs = page.getByRole('tablist', { name: 'Settings categories' });
   await expect(tabs.getByRole('tab')).toHaveCount(3);
@@ -71,6 +88,7 @@ test('icon tabs and curve dock preserve scene state and keep the viewport usable
   expect(openBounds.height).toBeGreaterThan(250);
   expect(openBounds.height).toBeLessThan(beforeBounds.height);
   expect(openBounds.y + openBounds.height).toBeLessThanOrEqual(dockBounds.y + 1);
+  await expectViewShortcuts(page);
   expect((await frame()).camera).toEqual(beforeDock.camera);
   expect((await frame()).cropBox).toEqual(beforeDock.cropBox);
   expect((await frame()).clipPlane).toEqual(beforeDock.clipPlane);
@@ -102,6 +120,7 @@ test('icon tabs and curve dock preserve scene state and keep the viewport usable
   await expect(page.getByRole('button', { name: 'Edit transfer function', exact: true })).toBeFocused();
   for (const width of [390, 320]) {
     await changed(page, () => page.setViewportSize({ width, height: 844 }));
+    await expectViewShortcuts(page);
     await page.getByRole('button', { name: 'Open settings', exact: true }).click();
     await page.getByRole('complementary', { name: 'Volume settings', exact: true }).getByRole('button', { name: 'Close settings', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Open settings', exact: true })).toBeFocused();
@@ -116,6 +135,7 @@ test('icon tabs and curve dock preserve scene state and keep the viewport usable
     const bottom = (await dock.boundingBox())!;
     expect(viewport.height).toBeGreaterThan(200);
     expect(viewport.y + viewport.height).toBeLessThanOrEqual(bottom.y + 1);
+    await expectViewShortcuts(page);
     expect(bottom.x).toBeGreaterThanOrEqual(0);
     expect(bottom.x + bottom.width).toBeLessThanOrEqual(width);
     expect((await frame()).transferFunction).toEqual(edited);

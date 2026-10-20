@@ -68,6 +68,33 @@ afterEach(async () => {
 });
 
 describe('session ownership and render scheduling', () => {
+  it('starts each volume in the anterior view and resets camera to the same default', async () => {
+    const instance = client();
+    await instance.start(); await flush();
+    const expected = { ...ready.initial!.camera, rotationXyzw: ready.standardViews![0]!.rotationXyzw };
+    expect(instance.getSnapshot().camera).toEqual(expected);
+    const socket = FakeSocket.instances[0]!;
+    socket.open();
+    expect((JSON.parse(socket.send.mock.calls[0]![0] as string) as RenderRequest).camera).toEqual(expected);
+    instance.setCamera({ ...expected, rotationXyzw: [0, 0, 0, 1], targetMm: [20, 30, 40], orthoHeightMm: 400 });
+    instance.resetCamera();
+    expect(instance.getSnapshot().camera).toEqual(expected);
+    await instance.loadSeries('phantom');
+    expect(instance.getSnapshot().camera).toEqual(expected);
+    expect(ready.initial!.camera.rotationXyzw).toEqual([0, 0, 0, 1]);
+  });
+  it('keeps the service initial camera when no anterior view is available', async () => {
+    for (const standardViews of [undefined, [], [{ id: 'inferior', name: 'Inferior', rotationXyzw: [0, 0, 0, 1] as [number, number, number, number] }]]) {
+      vi.mocked(api.createSession).mockResolvedValue({ ...ready, standardViews });
+      const instance = client();
+      await instance.start(); await flush();
+      expect(instance.getSnapshot().camera).toEqual(ready.initial!.camera);
+      instance.setCamera({ ...ready.initial!.camera, orthoHeightMm: 400 });
+      instance.resetCamera();
+      expect(instance.getSnapshot().camera).toEqual(ready.initial!.camera);
+      instance.stop(); await flush();
+    }
+  });
   it('does not send edited transfer curves to an older service', async () => {
     const instance = client();
     await instance.start(); await flush();

@@ -86,6 +86,8 @@ test('glass plane rotates, advances, clips on GPU, restores, exports without too
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/');
   await finalFrame(page);
+  await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await changed(page, () => page.getByRole('button', { name: 'Inferior view', exact: true }).click());
   await changed(page, () => page.getByRole('combobox', { name: 'Render size' }).selectOption('50%'));
   const original = await pixels(page);
   await page.getByRole('tab', { name: 'Crop', exact: true }).click();
@@ -201,6 +203,8 @@ test('glass handles and empty-space camera gestures keep independent ownership',
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.goto('/');
   await finalFrame(page);
+  await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await changed(page, () => page.getByRole('button', { name: 'Inferior view', exact: true }).click());
   await changed(page, () => page.getByRole('combobox', { name: 'Render size' }).selectOption('50%'));
   await page.getByRole('tab', { name: 'Crop', exact: true }).click();
   await changed(page, () => page.getByRole('checkbox', { name: 'Enable clipping plane', exact: true }).check());
@@ -214,7 +218,7 @@ test('glass handles and empty-space camera gestures keep independent ownership',
   expect(rotated.camera!.rotationXyzw).not.toEqual(initial.camera!.rotationXyzw);
   expect(rotated.clipPlane).toEqual(initial.clipPlane);
   await expect(overlay).toHaveAttribute('data-editing', 'true');
-  await changed(page, () => page.getByRole('button', { name: 'Reset camera', exact: true }).click());
+  await changed(page, () => page.getByRole('button', { name: 'Inferior view', exact: true }).click());
   const beforeCrossing = await displayedFrame();
   await changed(page, async () => {
     const point = await handlePoint(page, 'red');
@@ -228,7 +232,7 @@ test('glass handles and empty-space camera gestures keep independent ownership',
   const crossed = await displayedFrame();
   expect(crossed.camera!.rotationXyzw).not.toEqual(beforeCrossing.camera!.rotationXyzw);
   expect(crossed.clipPlane).toEqual(beforeCrossing.clipPlane);
-  await changed(page, () => page.getByRole('button', { name: 'Reset camera', exact: true }).click());
+  await changed(page, () => page.getByRole('button', { name: 'Inferior view', exact: true }).click());
   const beforeHandle = await displayedFrame();
   await changed(page, () => dragHandle(page, 'red'));
   const afterHandle = await displayedFrame();
@@ -241,7 +245,7 @@ test('glass handles and empty-space camera gestures keep independent ownership',
   const rotatedAgain = await displayedFrame();
   expect(rotatedAgain.camera!.rotationXyzw).not.toEqual(beforeMove.camera!.rotationXyzw);
   expect(rotatedAgain.clipPlane).toEqual(beforeMove.clipPlane);
-  await changed(page, () => page.getByRole('button', { name: 'Reset camera', exact: true }).click());
+  await changed(page, () => page.getByRole('button', { name: 'Inferior view', exact: true }).click());
   const beforeAdvance = await displayedFrame();
   await changed(page, async () => {
     const point = await handlePoint(page, 'blue');

@@ -36,6 +36,8 @@ test('an injected CT load failure closes its real session before a synthetic GPU
   await page.goto('/');
   await expect(page.getByRole('button', { name: 'Download final PNG', exact: true })).toBeEnabled({ timeout: 30000 });
   await expect(page.locator('.render-indicator')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Anterior view', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('orientation-top')).toHaveText('S');
   expect(inputs).toEqual(['series-1', 'phantom']);
   expect(injected).toBe(true);
   expect(releasedBeforeFallback).toBe(true);

@@ -348,6 +348,7 @@ function Viewport({ client, state, mode, resolution }: {
     const host = container.current;
     if (!host) return;
     const wheel = (event: WheelEvent) => {
+      if (event.target instanceof Element && event.target.closest('.standard-viewbar')) return;
       const current = client.getSnapshot();
       if (!current.camera || current.phase !== 'ready' || current.connection !== 'online') return;
       event.preventDefault();
@@ -374,6 +375,7 @@ function Viewport({ client, state, mode, resolution }: {
     (state.phase === 'ready' && !state.error && state.connection !== 'offline');
   const hasFrame = !!state.frame && state.phase === 'ready';
   const orientation = state.frame?.camera ? orientationLabels(state.frame.camera.rotationXyzw) : null;
+  const selectedView = matchedStandardView(state.camera, state.session?.standardViews ?? []);
   return <div ref={container} className={`viewport ${mode}${light ? ' light-viewport' : ''}`}
     style={{ backgroundColor: `rgb(${background.map(value => Math.round(value * 255)).join(' ')})` }}
     data-testid="viewport" aria-label="Volume rendering viewport" tabIndex={0}
@@ -430,6 +432,18 @@ function Viewport({ client, state, mode, resolution }: {
       <span className="mono">W {state.style?.windowWidth ?? '--'} / L {state.style?.windowLevel ?? '--'}</span></div>
     <div className="viewport-bottom-right"><span className="viewport-label">{state.frame?.quality.toUpperCase() ?? 'NO FRAME'}</span>
       <span className="mono">{state.frame ? `#${state.frame.seq}` : '--'}</span></div>
+    <div className="standard-viewbar" role="group" aria-label="Standard views"
+      onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()}>
+      {viewButtons.map(view => <span key={view.id} className="tooltip-anchor">
+        <button type="button" className="standard-view-button" aria-label={`${view.name} view`}
+          aria-pressed={selectedView === view.id}
+          disabled={!interactive || !state.session?.standardViews?.some(item => item.id === view.id)}
+          onClick={() => client.setStandardView(view.id)}>
+          <span aria-hidden="true">{view.short}</span>
+        </button>
+        <span className="tooltip" role="tooltip">{view.name}</span>
+      </span>)}
+    </div>
   </div>;
 }
 
@@ -496,7 +510,6 @@ export function App() {
   }, [drawerOpen]);
 
   const ready = state.phase === 'ready' && state.connection === 'online';
-  const selectedView = matchedStandardView(state.camera, state.session?.standardViews ?? []);
   const canExport = ready && !!state.frame && state.frame.quality === 'final' && !state.rendering && !exporting;
   const status = state.phase === 'loading' ? 'Loading' : state.phase === 'closing' ? 'Closing' : state.phase === 'error' ? 'Error' :
     state.connection === 'online' ? 'Connected' : state.connection === 'connecting' ? 'Connecting' : state.connection === 'reconnecting' ? 'Reconnecting' : 'Idle';
@@ -584,18 +597,6 @@ export function App() {
           <span className="toolbar-divider export-divider" />
           <IconButton label="Download final PNG" disabled={!canExport} onClick={() => void download()}>
             {exporting ? <LoaderCircle className="spin" size={18} /> : <Download size={18} />}</IconButton>
-        </div>
-        <div className="standard-viewbar" role="group" aria-label="Standard views">
-          {viewButtons.map(view => <span key={view.id} className="tooltip-anchor">
-            <button type="button" className="standard-view-button" aria-label={`${view.name} view`}
-              aria-pressed={selectedView === view.id}
-              disabled={!ready || !state.session?.standardViews?.some(item => item.id === view.id)}
-              onClick={() => client.setStandardView(view.id)}>
-              <span className="standard-view-name">{view.name}</span>
-              <span className="standard-view-short" aria-hidden="true">{view.short}</span>
-            </button>
-            <span className="tooltip" role="tooltip">{view.name}</span>
-          </span>)}
         </div>
         {(state.error || exportError) && <div ref={errorBanner} className="error-banner" role="alert"><AlertCircle size={16} />
           <span>{exportError || state.error}</span>
